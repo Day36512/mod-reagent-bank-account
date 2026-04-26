@@ -18,6 +18,6 @@ ReagentBankAccount.AccountWide = 0
 
 #    ReagentBankAccount.MaxOptionsPerPage
 #        Description: Number of items shown per page in the reagent bank NPC menu
-#        Default:     7
+#        Default:     16
 #
-ReagentBankAccount.MaxOptionsPerPage = 7
+ReagentBankAccount.MaxOptionsPerPage = 16
