@@ -50,7 +50,7 @@ Click the **Reagent Bank icon on the character paperdoll**.
 Server:
 - ReagentBankAccount.cpp
 - ReagentBankAccount.h
-- ReagentBankAccount_loader.cpp :contentReference[oaicite:0]{index=0}
+- ReagentBankAccount_loader.cpp 
 
 Addon:
 - ReagentBankUI.lua
