@@ -1473,6 +1473,20 @@ function RB:SetAutoDepositTickerSeconds(seconds, silent)
     end
 end
 
+
+function RB:DisableAutoDepositTickerForProfessionWithdraw()
+    if not self:IsAutoDepositTickerEnabled() then
+        return
+    end
+
+    self:SetAutoDepositTickerSeconds(0, true)
+    PrintAddon("periodic auto-deposit disabled because you withdrew reagents for a profession recipe.")
+
+    if self.frame and self.frame:IsShown() then
+        self:Status("Periodic auto-deposit disabled for profession reagent prep.", 1.00, 0.82, 0.32)
+    end
+end
+
 function RB:ApplyAutoDepositTickerBox(silent)
     if not self.colorSettingsFrame or not self.colorSettingsFrame.autoDepositIntervalBox then
         return
@@ -2870,6 +2884,7 @@ function RB:WithdrawNeededForSelectedRecipe()
         return
     end
 
+    self:DisableAutoDepositTickerForProfessionWithdraw()
     self:ArmAutoDepositLeftovers(needs, recipeName, repeatCount)
 
     self:SendItemAmountCommands("withdraw needed", needs, TRANSACTION_MAX_PAIRS_PER_COMMAND)
