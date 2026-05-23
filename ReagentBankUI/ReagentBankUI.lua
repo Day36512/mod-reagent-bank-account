@@ -321,6 +321,10 @@ local ITEM_CACHE_REFRESH_INTERVAL = 0.35
 local ITEM_CACHE_REFRESH_TIMEOUT = 8.0
 local AUTO_DEPOSIT_AFTER_CLOSE_DELAY = 0.80
 local AUTO_DEPOSIT_PREP_EXPIRE_SECONDS = 300
+local AUTO_DEPOSIT_TICKER_DEFAULT_SECONDS = 0
+local AUTO_DEPOSIT_TICKER_MIN_SECONDS = 30
+local AUTO_DEPOSIT_TICKER_MAX_SECONDS = 3600
+local AUTO_DEPOSIT_TICKER_RETRY_DELAY = 10
 local TRANSACTION_MAX_PAIRS_PER_COMMAND = 10
 local TRANSACTION_CHAT_ITEM_LIMIT = 6
 local TRADE_SKILL_PREPARE_COUNT_MIN = 1
@@ -385,6 +389,146 @@ local PAPERDOLL_BUTTON_BORDER_SIZE = 54
 
 local PAPERDOLL_BUTTON_HIGHLIGHT_TEXTURE = "Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight"
 local PAPERDOLL_BUTTON_HIGHLIGHT_SIZE = 52
+
+local PAPERDOLL_LAUNCHER_DOCK_VERSION = 20260518
+
+local function EnsurePaperDollLauncherDock()
+    local dock = _G.PaperDollLauncherDock
+    if type(dock) ~= "table" then
+        dock = {}
+        _G.PaperDollLauncherDock = dock
+    end
+
+    dock.entries = dock.entries or {}
+
+    if (tonumber(dock.version) or 0) >= PAPERDOLL_LAUNCHER_DOCK_VERSION and dock.Register and dock.Layout then
+        return dock
+    end
+
+    dock.version = PAPERDOLL_LAUNCHER_DOCK_VERSION
+    dock.startPoint = "TOPRIGHT"
+    dock.startRelativePoint = "TOPRIGHT"
+    dock.startX = -324
+    dock.startY = -464
+    dock.gap = 2
+
+    function dock:GetParentFrame()
+        return _G.PaperDollFrame or _G.CharacterFrame or UIParent
+    end
+
+    function dock:InstallHooks()
+        self.hookedParents = self.hookedParents or {}
+
+        local candidates = { _G.PaperDollFrame, _G.CharacterFrame }
+        for _, parent in ipairs(candidates) do
+            if parent and parent.HookScript and not self.hookedParents[parent] then
+                parent:HookScript("OnShow", function()
+                    if _G.PaperDollLauncherDock and _G.PaperDollLauncherDock.Layout then
+                        _G.PaperDollLauncherDock:Layout()
+                    end
+                end)
+                self.hookedParents[parent] = true
+            end
+        end
+
+        if not self.eventFrame then
+            self.eventFrame = CreateFrame("Frame")
+            self.eventFrame:RegisterEvent("PLAYER_LOGIN")
+            self.eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+            self.eventFrame:RegisterEvent("ADDON_LOADED")
+            self.eventFrame:SetScript("OnEvent", function()
+                if _G.PaperDollLauncherDock and _G.PaperDollLauncherDock.Layout then
+                    _G.PaperDollLauncherDock:Layout()
+                end
+            end)
+        end
+    end
+
+    function dock:Register(id, button, order)
+        if not id or not button then
+            return
+        end
+
+        self.entries = self.entries or {}
+        self.entries[id] = self.entries[id] or {}
+        self.entries[id].button = button
+        self.entries[id].order = tonumber(order) or 1000
+
+        button.PaperDollLauncherDockID = id
+
+        self:InstallHooks()
+        self:Layout()
+    end
+
+    function dock:Unregister(id)
+        if self.entries then
+            self.entries[id] = nil
+        end
+
+        self:Layout()
+    end
+
+    function dock:Layout()
+        self:InstallHooks()
+
+        local parent = self:GetParentFrame()
+        local buttons = {}
+
+        for id, entry in pairs(self.entries or {}) do
+            if entry and entry.button then
+                table.insert(buttons, {
+                    id = id,
+                    button = entry.button,
+                    order = tonumber(entry.order) or 1000,
+                })
+            end
+        end
+
+        table.sort(buttons, function(a, b)
+            if a.order == b.order then
+                return tostring(a.id) < tostring(b.id)
+            end
+
+            return a.order < b.order
+        end)
+
+        local previousButton = nil
+
+        for _, entry in ipairs(buttons) do
+            local button = entry.button
+
+            if button.SetParent and button:GetParent() ~= parent then
+                button:SetParent(parent)
+            end
+
+            if button.SetMovable then
+                button:SetMovable(false)
+            end
+
+            if button.SetClampedToScreen then
+                button:SetClampedToScreen(false)
+            end
+
+            if button.SetFrameLevel and parent and parent.GetFrameLevel then
+                button:SetFrameLevel((parent:GetFrameLevel() or 1) + 12)
+            end
+
+            button:ClearAllPoints()
+
+            if previousButton then
+                button:SetPoint("LEFT", previousButton, "RIGHT", self.gap, 0)
+            else
+                button:SetPoint(self.startPoint, parent, self.startRelativePoint, self.startX, self.startY)
+            end
+
+            button:Show()
+            previousButton = button
+        end
+    end
+
+    dock:InstallHooks()
+    return dock
+end
 
 local function Trim(text)
     if not text then
@@ -581,7 +725,7 @@ end
 local function SafeTransactionSource(source)
     source = string.lower(tostring(source or "manual"))
 
-    if source == "profession" or source == "reverse" or source == "manual" then
+    if source == "profession" or source == "reverse" or source == "manual" or source == "auto" then
         return source
     end
 
@@ -980,6 +1124,14 @@ function RB:ApplySkin()
         end
         self:StyleButton(settings.cycle)
         self:StyleButton(settings.reset)
+        self:StyleButton(settings.autoDepositApply)
+        self:StyleButton(settings.autoDepositOff)
+        self:StyleEditBox(settings.autoDepositIntervalBox)
+        SetFontColor(settings.themeHeader, SKIN.titleText)
+        SetFontColor(settings.autoDepositHeader, SKIN.titleText)
+        SetFontColor(settings.autoDepositNote, SKIN.mutedText)
+        SetFontColor(settings.autoDepositLabel, SKIN.mutedText)
+        SetFontColor(settings.autoDepositStatus, SKIN.mutedText)
     end
 end
 
@@ -1138,6 +1290,8 @@ function RB:OnUpdate(elapsed)
         self:DepositPreparedLeftovers()
     end
 
+    self:RunAutoDepositTicker(now)
+
     if self.pendingRefresh and now >= self.pendingRefresh.at then
         local refresh = self.pendingRefresh
         self.pendingRefresh = nil
@@ -1159,7 +1313,7 @@ function RB:OnUpdate(elapsed)
         self:ClearBusy("No server data yet. Press Refresh to try again.", 1.00, 0.82, 0.32)
     end
 
-    if not self.pendingRefresh and not self.busyStartedAt and not self.pendingAutoDepositAt and not self.nextItemInfoRefreshAt then
+    if not self.pendingRefresh and not self.busyStartedAt and not self.pendingAutoDepositAt and not self.nextItemInfoRefreshAt and not self.nextAutoDepositTickerAt then
         self:SetScript("OnUpdate", nil)
     end
 end
@@ -1265,6 +1419,142 @@ end
 
 function RB:ToggleDepositPreviewEnabled()
     self:SetDepositPreviewEnabled(not self:IsDepositPreviewEnabled())
+end
+
+function RB:ClampAutoDepositTickerSeconds(seconds)
+    seconds = math.floor(tonumber(seconds) or AUTO_DEPOSIT_TICKER_DEFAULT_SECONDS)
+
+    if seconds <= 0 then
+        return 0
+    end
+
+    return Clamp(seconds, AUTO_DEPOSIT_TICKER_MIN_SECONDS, AUTO_DEPOSIT_TICKER_MAX_SECONDS)
+end
+
+function RB:GetAutoDepositTickerSeconds()
+    ReagentBankUIDB = ReagentBankUIDB or {}
+    ReagentBankUIDB.autoDepositTickerSeconds = self:ClampAutoDepositTickerSeconds(ReagentBankUIDB.autoDepositTickerSeconds)
+    return ReagentBankUIDB.autoDepositTickerSeconds
+end
+
+function RB:IsAutoDepositTickerEnabled()
+    return self:GetAutoDepositTickerSeconds() > 0
+end
+
+function RB:RestartAutoDepositTicker()
+    local seconds = self:GetAutoDepositTickerSeconds()
+
+    if seconds > 0 then
+        self.nextAutoDepositTickerAt = GetTime() + seconds
+        self:EnsureOnUpdate()
+    else
+        self.nextAutoDepositTickerAt = nil
+        self.autoDepositQuietUntil = nil
+        self.autoDepositSuppressViewUntil = nil
+    end
+end
+
+function RB:SetAutoDepositTickerSeconds(seconds, silent)
+    ReagentBankUIDB = ReagentBankUIDB or {}
+    seconds = self:ClampAutoDepositTickerSeconds(seconds)
+    ReagentBankUIDB.autoDepositTickerSeconds = seconds
+
+    self:RestartAutoDepositTicker()
+    self:UpdateAutoDepositTickerControls()
+
+    if not silent then
+        if seconds > 0 then
+            PrintAddon("periodic auto-deposit enabled every " .. tostring(seconds) .. " second(s).")
+            self:Status("Periodic auto-deposit every " .. tostring(seconds) .. " second(s).", 0.82, 0.82, 0.82)
+        else
+            PrintAddon("periodic auto-deposit disabled.")
+            self:Status("Periodic auto-deposit disabled.", 0.82, 0.82, 0.82)
+        end
+    end
+end
+
+function RB:ApplyAutoDepositTickerBox(silent)
+    if not self.colorSettingsFrame or not self.colorSettingsFrame.autoDepositIntervalBox then
+        return
+    end
+
+    local text = Trim(self.colorSettingsFrame.autoDepositIntervalBox:GetText() or "")
+    local seconds = tonumber(text) or 0
+    self:SetAutoDepositTickerSeconds(seconds, silent)
+end
+
+function RB:UpdateAutoDepositTickerControls()
+    local frame = self.colorSettingsFrame
+    if not frame then
+        return
+    end
+
+    local seconds = self:GetAutoDepositTickerSeconds()
+
+    if frame.autoDepositIntervalBox then
+        local desiredText = tostring(seconds)
+        if frame.autoDepositIntervalBox:GetText() ~= desiredText then
+            frame.autoDepositIntervalBox:SetText(desiredText)
+        end
+    end
+
+    if frame.autoDepositStatus then
+        if seconds > 0 then
+            frame.autoDepositStatus:SetText("Enabled: Deposit All runs every " .. tostring(seconds) .. " second(s).")
+        else
+            frame.autoDepositStatus:SetText("Disabled. Enter 0 to keep it off, or 30-3600 seconds to enable.")
+        end
+    end
+end
+
+function RB:IsAutoDepositQuietActive()
+    return self.autoDepositQuietUntil and GetTime() <= self.autoDepositQuietUntil
+end
+
+function RB:IsAutoDepositViewSuppressed()
+    if not self.autoDepositSuppressViewUntil or GetTime() > self.autoDepositSuppressViewUntil then
+        return false
+    end
+
+    return not (self.frame and self.frame:IsShown())
+end
+
+function RB:RunAutoDepositTicker(now)
+    local seconds = self:GetAutoDepositTickerSeconds()
+
+    if seconds <= 0 then
+        self.nextAutoDepositTickerAt = nil
+        return
+    end
+
+    if not self.nextAutoDepositTickerAt then
+        self.nextAutoDepositTickerAt = now + seconds
+        return
+    end
+
+    if now < self.nextAutoDepositTickerAt then
+        return
+    end
+
+    if self.busyKind or self.pendingRefresh or self.pendingAutoDepositAt or self.pendingDepositPreview or self.pendingTransaction then
+        self.nextAutoDepositTickerAt = now + AUTO_DEPOSIT_TICKER_RETRY_DELAY
+        return
+    end
+
+    if UnitAffectingCombat and UnitAffectingCombat("player") then
+        self.nextAutoDepositTickerAt = now + AUTO_DEPOSIT_TICKER_RETRY_DELAY
+        return
+    end
+
+    self.nextAutoDepositTickerAt = now + seconds
+    self.autoDepositQuietUntil = now + REQUEST_TIMEOUT_SECONDS
+    self.autoDepositSuppressViewUntil = now + REQUEST_TIMEOUT_SECONDS
+    self:SendServerCommand("deposit all", { action = "deposit", source = "auto" })
+
+    if self.frame and self.frame:IsShown() then
+        self.autoDepositSuppressViewUntil = nil
+        self:ScheduleCurrentRefresh(MUTATION_REFRESH_DELAY)
+    end
 end
 
 function RB:UpdatePreviewToggleButton()
@@ -2307,6 +2597,8 @@ function RB:GetDepositChatPrefix(transaction)
 
     if source == "profession" then
         return "Profession leftovers auto-deposited"
+    elseif source == "auto" then
+        return "Auto-deposited"
     elseif source == "reverse" then
         return "Undo deposited"
     end
@@ -2654,27 +2946,8 @@ function RB:PositionPaperDollButton()
         return
     end
 
-    local parent = _G[PAPERDOLL_BUTTON_PARENT]
-    if not parent then
-        return
-    end
-
-    local button = self.paperDollButton
-    local anchorButton = _G[PAPERDOLL_ANCHOR_BUTTON_NAME]
-
-    button:ClearAllPoints()
-
-    if anchorButton then
-        button:SetPoint("LEFT", anchorButton, "RIGHT", PAPERDOLL_BUTTON_GAP, 0)
-    else
-        button:SetPoint(
-            PAPERDOLL_BUTTON_FALLBACK_POINT,
-            parent,
-            PAPERDOLL_BUTTON_FALLBACK_RELATIVE_POINT,
-            PAPERDOLL_BUTTON_FALLBACK_X,
-            PAPERDOLL_BUTTON_FALLBACK_Y
-        )
-    end
+    local dock = EnsurePaperDollLauncherDock()
+    dock:Register("ReagentBankUI", self.paperDollButton, 20)
 end
 
 function RB:CreateColorSettingsFrame()
@@ -2683,8 +2956,8 @@ function RB:CreateColorSettingsFrame()
     end
 
     local frame = CreateFrame("Frame", "ReagentBankUIColorSettingsFrame", UIParent)
-    frame:SetWidth(390)
-    frame:SetHeight(246)
+    frame:SetWidth(430)
+    frame:SetHeight(350)
     frame:SetMovable(true)
     frame:EnableMouse(true)
     frame:SetClampedToScreen(true)
@@ -2703,7 +2976,7 @@ function RB:CreateColorSettingsFrame()
     frame.title:SetPoint("TOPLEFT", 16, -14)
     frame.title:SetPoint("RIGHT", -46, 0)
     frame.title:SetJustifyH("LEFT")
-    frame.title:SetText("Reagent Bank Color Schema")
+    frame.title:SetText("Reagent Bank Settings")
     frame.title:SetTextColor(SKIN.titleText[1], SKIN.titleText[2], SKIN.titleText[3], SKIN.titleText[4] or 1)
 
     frame.close = self:CreateCloseButton(frame)
@@ -2716,14 +2989,20 @@ function RB:CreateColorSettingsFrame()
     frame.note:SetPoint("TOPLEFT", 16, -44)
     frame.note:SetPoint("RIGHT", -16, 0)
     frame.note:SetJustifyH("LEFT")
-    frame.note:SetText("Ctrl-click the paperdoll reagent bank icon to reopen this panel. Themes are saved per account.")
+    frame.note:SetText("Settings are saved per account.")
     frame.note:SetTextColor(SKIN.mutedText[1], SKIN.mutedText[2], SKIN.mutedText[3], SKIN.mutedText[4] or 1)
+
+    frame.themeHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    frame.themeHeader:SetPoint("TOPLEFT", 18, -66)
+    frame.themeHeader:SetJustifyH("LEFT")
+    frame.themeHeader:SetText("Color schema")
+    frame.themeHeader:SetTextColor(SKIN.titleText[1], SKIN.titleText[2], SKIN.titleText[3], SKIN.titleText[4] or 1)
 
     frame.themeButtons = {}
 
     local firstColumnX = 18
-    local secondColumnX = 198
-    local firstRowY = -82
+    local secondColumnX = 218
+    local firstRowY = -88
     local rowGap = 34
     local buttonWidth = 158
     local buttonHeight = 26
@@ -2755,13 +3034,69 @@ function RB:CreateColorSettingsFrame()
         table.insert(frame.themeButtons, button)
     end
 
-    frame.cycle = self:CreateButton(frame, 170, 26, "Cycle Theme")
+    frame.autoDepositHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    frame.autoDepositHeader:SetPoint("TOPLEFT", 18, -198)
+    frame.autoDepositHeader:SetJustifyH("LEFT")
+    frame.autoDepositHeader:SetText("Periodic auto-deposit")
+    frame.autoDepositHeader:SetTextColor(SKIN.titleText[1], SKIN.titleText[2], SKIN.titleText[3], SKIN.titleText[4] or 1)
+
+    frame.autoDepositNote = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    frame.autoDepositNote:SetPoint("TOPLEFT", 18, -218)
+    frame.autoDepositNote:SetPoint("RIGHT", -18, 0)
+    frame.autoDepositNote:SetJustifyH("LEFT")
+    frame.autoDepositNote:SetText("Runs Deposit All on a timer while you are online. Enter 0 to disable. Minimum: 30 seconds.")
+    frame.autoDepositNote:SetTextColor(SKIN.mutedText[1], SKIN.mutedText[2], SKIN.mutedText[3], SKIN.mutedText[4] or 1)
+
+    frame.autoDepositLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    frame.autoDepositLabel:SetPoint("TOPLEFT", 20, -248)
+    frame.autoDepositLabel:SetText("Every")
+    frame.autoDepositLabel:SetJustifyH("LEFT")
+    frame.autoDepositLabel:SetTextColor(SKIN.mutedText[1], SKIN.mutedText[2], SKIN.mutedText[3], SKIN.mutedText[4] or 1)
+
+    frame.autoDepositIntervalBox = self:CreateEditBox(frame, 66, 24)
+    frame.autoDepositIntervalBox:SetPoint("LEFT", frame.autoDepositLabel, "RIGHT", 10, 0)
+    frame.autoDepositIntervalBox:SetScript("OnEnterPressed", function(selfBox)
+        RB:ApplyAutoDepositTickerBox()
+        selfBox:ClearFocus()
+    end)
+    frame.autoDepositIntervalBox:SetScript("OnEscapePressed", function(selfBox)
+        RB:UpdateAutoDepositTickerControls()
+        selfBox:ClearFocus()
+    end)
+    frame.autoDepositIntervalBox:SetScript("OnTextChanged", nil)
+
+    frame.autoDepositSecondsText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    frame.autoDepositSecondsText:SetPoint("LEFT", frame.autoDepositIntervalBox, "RIGHT", 7, 0)
+    frame.autoDepositSecondsText:SetText("seconds")
+    frame.autoDepositSecondsText:SetJustifyH("LEFT")
+    frame.autoDepositSecondsText:SetTextColor(SKIN.mutedText[1], SKIN.mutedText[2], SKIN.mutedText[3], SKIN.mutedText[4] or 1)
+
+    frame.autoDepositApply = self:CreateButton(frame, 72, 24, "Apply")
+    frame.autoDepositApply:SetPoint("LEFT", frame.autoDepositSecondsText, "RIGHT", 12, 0)
+    frame.autoDepositApply:SetScript("OnClick", function()
+        RB:ApplyAutoDepositTickerBox()
+    end)
+
+    frame.autoDepositOff = self:CreateButton(frame, 72, 24, "Off")
+    frame.autoDepositOff:SetPoint("LEFT", frame.autoDepositApply, "RIGHT", 8, 0)
+    frame.autoDepositOff:SetScript("OnClick", function()
+        RB:SetAutoDepositTickerSeconds(0)
+    end)
+
+    frame.autoDepositStatus = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    frame.autoDepositStatus:SetPoint("TOPLEFT", 20, -278)
+    frame.autoDepositStatus:SetPoint("RIGHT", -18, 0)
+    frame.autoDepositStatus:SetJustifyH("LEFT")
+    frame.autoDepositStatus:SetText("")
+    frame.autoDepositStatus:SetTextColor(SKIN.mutedText[1], SKIN.mutedText[2], SKIN.mutedText[3], SKIN.mutedText[4] or 1)
+
+    frame.cycle = self:CreateButton(frame, 188, 26, "Cycle Theme")
     frame.cycle:SetPoint("BOTTOMLEFT", 18, 16)
     frame.cycle:SetScript("OnClick", function()
         RB:CycleColorTheme()
     end)
 
-    frame.reset = self:CreateButton(frame, 170, 26, "Reset to Gold")
+    frame.reset = self:CreateButton(frame, 188, 26, "Reset to Gold")
     frame.reset:SetPoint("LEFT", frame.cycle, "RIGHT", 12, 0)
     frame.reset:SetScript("OnClick", function()
         RB:SetColorTheme(DEFAULT_COLOR_THEME)
@@ -2808,6 +3143,8 @@ function RB:UpdateColorSettingsFrame()
     if frame.reset then
         frame.reset:SetText("Reset to Gold")
     end
+
+    self:UpdateAutoDepositTickerControls()
 end
 
 function RB:ShowColorSettings()
@@ -2849,10 +3186,8 @@ function RB:CreatePaperDollButton()
         return
     end
 
-    local parent = _G[PAPERDOLL_BUTTON_PARENT]
-    if not parent then
-        return
-    end
+    local dock = EnsurePaperDollLauncherDock()
+    local parent = dock:GetParentFrame()
 
     local button = CreateFrame("Button", "ReagentBankUIPaperDollButton", parent)
     button:SetWidth(PAPERDOLL_BUTTON_SIZE)
@@ -4331,6 +4666,9 @@ function RB:HandleOK(okText)
         okText = okText .. " " .. self:BuildTransactionSummary(self.lastTransaction)
     end
 
+    -- Do not clear autoDepositQuietUntil here. Some server responses send OK first
+    -- and then follow up with ROOT/CATEGORY data. Keeping the quiet window alive
+    -- prevents the hidden main frame from being created and shown by that follow-up data.
     self:ClearBusy(okText, 0.45, 1.00, 0.45)
     self:UpdateUndoButton()
 
@@ -4348,6 +4686,13 @@ end
 
 function RB:HandleError(errText)
     errText = Trim(errText or "Server error.")
+
+    if self:IsAutoDepositQuietActive() then
+        self.autoDepositQuietUntil = nil
+        self.autoDepositSuppressViewUntil = nil
+        PrintAddon("periodic auto-deposit skipped: " .. errText)
+        return
+    end
 
     self.mutationNeedsRefresh = nil
     self:CreateFrame()
@@ -4592,6 +4937,12 @@ function RB:HandleProtocol(message)
             self.mutationNeedsRefresh = nil
 
             self:ClearBusy()
+
+            if self:IsAutoDepositViewSuppressed() then
+                self.autoDepositSuppressViewUntil = nil
+                return true
+            end
+
             self:RenderRoot(true)
             self:Status("Updated " .. SafeDate() .. ".", 0.45, 1.00, 0.45)
         elseif view == "CATEGORY" and self.pendingView == "category" then
@@ -4608,6 +4959,12 @@ function RB:HandleProtocol(message)
             self.mutationNeedsRefresh = nil
 
             self:ClearBusy()
+
+            if self:IsAutoDepositViewSuppressed() then
+                self.autoDepositSuppressViewUntil = nil
+                return true
+            end
+
             self:RenderCategory(true)
             self:Status("Updated " .. SafeDate() .. ".", 0.45, 1.00, 0.45)
         end
@@ -4722,6 +5079,25 @@ SlashCmdList["REAGENTBANKUI"] = function(msg)
         return
     end
 
+    if command == "ticker" or command == "autoticker" or command == "periodic" then
+        local lowerValue = string.lower(Trim(value or ""))
+
+        if lowerValue == "" or lowerValue == "settings" or lowerValue == "options" then
+            RB:ToggleColorSettings()
+        elseif lowerValue == "off" or lowerValue == "0" or lowerValue == "false" then
+            RB:SetAutoDepositTickerSeconds(0)
+        else
+            local seconds = tonumber(lowerValue)
+            if seconds then
+                RB:SetAutoDepositTickerSeconds(seconds)
+            else
+                PrintAddon("usage: /rbank ticker 0|30-3600")
+            end
+        end
+
+        return
+    end
+
     if command == "autodeposit" then
         ReagentBankUIDB = ReagentBankUIDB or {}
         local lowerValue = string.lower(value or "")
@@ -4772,6 +5148,7 @@ SlashCmdList["REAGENTBANKUI"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank preview on|off")
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank undo")
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank scale 0.75 - 1.20")
+    DEFAULT_CHAT_FRAME:AddMessage("  /rbank ticker 0|30-3600")
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank autodeposit on|off")
 end
 
@@ -4784,6 +5161,8 @@ RB:SetScript("OnEvent", function(self, event, ...)
             if ReagentBankUIDB.autoDepositLeftovers == nil then
                 ReagentBankUIDB.autoDepositLeftovers = false
             end
+            ReagentBankUIDB.autoDepositTickerSeconds = self:ClampAutoDepositTickerSeconds(ReagentBankUIDB.autoDepositTickerSeconds)
+            self:RestartAutoDepositTicker()
             ReagentBankUIDB.sortMode = NormalizeItemSortMode(ReagentBankUIDB.sortMode)
             ReagentBankUIDB.categorySortMode = NormalizeCategorySortMode(ReagentBankUIDB.categorySortMode)
             self:ApplySavedColorTheme()
@@ -4801,6 +5180,7 @@ RB:SetScript("OnEvent", function(self, event, ...)
         end
     elseif event == "PLAYER_LOGIN" then
         self:ApplySavedColorTheme()
+        self:RestartAutoDepositTicker()
         self:CreatePaperDollButton()
         self:ApplySkin()
         self:CreateTradeSkillControls()
