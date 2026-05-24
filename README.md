@@ -64,7 +64,7 @@ Shopping list features:
 - Shows needed amount and current bag count
 - Compact AH helper panel opens beside the Auction House frame
 
-Note: AH purchases do not automatically decrement the list. Adjust amounts manually from the list.
+Note: AH purchases do not automatically decrement the list. Adjust amounts manually from the list. I also have not tested this with any other AH addons.
 
 ---
 
