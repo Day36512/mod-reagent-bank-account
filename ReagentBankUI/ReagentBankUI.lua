@@ -331,6 +331,14 @@ local TRADE_SKILL_PREPARE_COUNT_MIN = 1
 local TRADE_SKILL_PREPARE_COUNT_MAX = 999
 local DEPOSIT_PREVIEW_ROW_COUNT = 10
 local TRADE_SKILL_CHECK_TIMEOUT = 2.0
+local TRADE_SKILL_SHOPPING_LIST_LIMIT = 3
+local SHOPPING_LIST_CHAT_ITEM_LIMIT = 12
+local SHOPPING_LIST_IMPORT_TIMEOUT = 10.0
+local AUCTION_SHOPPING_ROW_COUNT = 9
+local AUCTION_SHOPPING_FRAME_WIDTH = 318
+local AUCTION_SHOPPING_FRAME_HEIGHT = 382
+local AUCTION_SHOPPING_FRAME_GAP = 8
+local LOW_STOCK_DEFAULT_CRAFTS = 5
 
 -- Main window top action button placement.
 -- Change these to move/resize Deposit All, Withdraw All, and Refresh.
@@ -340,6 +348,7 @@ local ROOT_ACTION_BUTTON_WIDTH = 118
 local ROOT_REFRESH_BUTTON_WIDTH = 96
 local ROOT_SORT_BUTTON_WIDTH = 98
 local ROOT_PREVIEW_TOGGLE_BUTTON_WIDTH = 112
+local ROOT_SHOPPING_BUTTON_WIDTH = 86
 local ROOT_BUTTON_HEIGHT = 24
 local ROOT_BUTTON_GAP = 8
 local ROOT_HELP_TEXT_GAP = 12
@@ -355,6 +364,9 @@ local CATEGORY_PAGE_BUTTON_WIDTH = 72
 local CATEGORY_BUTTON_HEIGHT = 24
 local CATEGORY_BUTTON_GAP = 8
 local CATEGORY_PAGE_TEXT_GAP = 10
+local SHOPPING_RECIPE_BUTTON_WIDTH = 132
+local SHOPPING_PRINT_BUTTON_WIDTH = 96
+local SHOPPING_CLEAR_BUTTON_WIDTH = 96
 
 -- PaperDoll toggle button placement/style.
 -- Uses the same round minimap-style art as the PaperDollAHButton example.
@@ -1013,9 +1025,12 @@ function RB:ApplySkin()
         self:StyleCloseButton(f.close)
 
         local buttons = {
-            f.rootDeposit, f.rootWithdraw, f.refresh, f.sortMode, f.previewToggle,
+            f.rootDeposit, f.rootWithdraw, f.refresh, f.sortMode, f.shoppingList, f.previewToggle,
             f.back, f.catDeposit, f.catWithdraw, f.prev, f.next,
             f.withdrawOne, f.withdrawStack, f.withdrawItemAll, f.withdrawExact, f.detailBack,
+            f.addShopping, f.shoppingImportRecipe, f.shoppingPrint, f.shoppingClear,
+            f.shoppingPrev, f.shoppingNext,
+            f.shoppingPromptUpdate, f.shoppingPromptRemove, f.shoppingPromptCancel,
             f.undoLast, f.quickWithdrawButton, f.quickWithdrawAll, f.quickWithdrawCancel,
         }
 
@@ -1029,17 +1044,25 @@ function RB:ApplySkin()
         end
 
         self:StyleCloseButton(f.quickWithdrawClose)
+        if f.shoppingPrompt then
+            self:StyleCloseButton(f.shoppingPromptClose)
+        end
         if f.depositPreview then
             self:StyleCloseButton(f.depositPreview.close)
         end
 
         self:StyleEditBox(f.exactBox)
+        self:StyleEditBox(f.shoppingAmountBox)
+        self:StyleEditBox(f.shoppingPromptBox)
         self:StyleEditBox(f.quickWithdrawBox)
 
         self:MakeBackdrop(f.list, 0.78, true)
         self:MakeBackdrop(f.detail, 0.78, true)
         self:MakeBackdrop(f.footer, 0.58, true)
         self:MakeBackdrop(f.quickWithdraw, 0.98, true)
+        if f.shoppingPrompt then
+            self:MakeBackdrop(f.shoppingPrompt, 0.98, true)
+        end
         if f.depositPreview then
             self:MakeBackdrop(f.depositPreview, 0.98, true)
         end
@@ -1054,11 +1077,18 @@ function RB:ApplySkin()
         SetFontColor(f.headerName, SKIN.buttonText)
         SetFontColor(f.headerCount, SKIN.buttonText)
         SetFontColor(f.pageText, SKIN.mutedText)
+        SetFontColor(f.shoppingPageText, SKIN.mutedText)
         SetFontColor(f.helpText, SKIN.mutedText)
         SetFontColor(f.status, SKIN.mutedText)
         SetFontColor(f.detailName, SKIN.titleText)
         SetFontColor(f.detailHint, SKIN.mutedText)
         SetFontColor(f.exactLabel, SKIN.buttonText)
+        SetFontColor(f.shoppingLabel, SKIN.buttonText)
+        SetFontColor(f.shoppingPromptTitle, SKIN.titleText)
+        SetFontColor(f.shoppingPromptName, SKIN.buttonText)
+        SetFontColor(f.shoppingPromptCurrent, SKIN.mutedText)
+        SetFontColor(f.shoppingPromptLabel, SKIN.buttonText)
+        SetFontColor(f.shoppingPromptHint, SKIN.mutedText)
         SetFontColor(f.quickWithdrawTitle, SKIN.titleText)
         SetFontColor(f.quickWithdrawName, SKIN.buttonText)
         SetFontColor(f.quickWithdrawStored, SKIN.mutedText)
@@ -1090,10 +1120,43 @@ function RB:ApplySkin()
         end
     end
 
+    if self.auctionShoppingFrame then
+        local auctionFrame = self.auctionShoppingFrame
+        self:MakeBackdrop(auctionFrame, 0.98, true)
+        self:StyleCloseButton(auctionFrame.close)
+        self:StyleButton(auctionFrame.prev)
+        self:StyleButton(auctionFrame.next)
+        SetFontColor(auctionFrame.title, SKIN.titleText)
+        SetFontColor(auctionFrame.summary, SKIN.mutedText)
+        SetFontColor(auctionFrame.headerName, SKIN.buttonText)
+        SetFontColor(auctionFrame.headerCount, SKIN.buttonText)
+        SetFontColor(auctionFrame.pageText, SKIN.mutedText)
+        SetFontColor(auctionFrame.status, SKIN.mutedText)
+        if auctionFrame.header and auctionFrame.header.bg then
+            SetTextureColor(auctionFrame.header.bg, SKIN.listHeaderBg)
+        end
+        if auctionFrame.rows then
+            for index, row in ipairs(auctionFrame.rows) do
+                if (index % 2) == 0 then
+                    SetTextureColor(row.bg, SKIN.rowEven)
+                else
+                    SetTextureColor(row.bg, SKIN.rowOdd)
+                end
+                SetTextureColor(row.fill, SKIN.rowFill)
+                SetTextureColor(row.hover, SKIN.rowHover)
+                SetFontColor(row.count, SKIN.blueText)
+            end
+        end
+    end
+
     self:StylePaperDollButton()
 
     if self.tradeSkillButton then
         self:StyleButton(self.tradeSkillButton)
+    end
+
+    if self.tradeSkillShoppingButton then
+        self:StyleButton(self.tradeSkillShoppingButton)
     end
 
     if self.tradeSkillMinusButton then
@@ -1181,6 +1244,11 @@ function RB:Status(text, r, g, b)
         self.frame.status:SetText(text or "")
         self.frame.status:SetTextColor(r or 0.70, g or 0.70, b or 0.70)
     end
+
+    if self.auctionShoppingFrame and self.auctionShoppingFrame.status then
+        self.auctionShoppingFrame.status:SetText(text or "")
+        self.auctionShoppingFrame.status:SetTextColor(r or 0.70, g or 0.70, b or 0.70)
+    end
 end
 
 function RB:EnsureOnUpdate()
@@ -1254,13 +1322,24 @@ end
 function RB:RefreshItemInfoIfNeeded()
     self.nextItemInfoRefreshAt = nil
 
-    if not self.frame or not self.frame:IsShown() then
+    local mainShown = self.frame and self.frame:IsShown()
+    local auctionListShown = self.auctionShoppingFrame and self.auctionShoppingFrame:IsShown()
+
+    if not mainShown and not auctionListShown then
         self:ClearItemInfoRefresh()
         return
     end
 
     if self.itemInfoRefreshStartedAt and GetTime() - self.itemInfoRefreshStartedAt >= ITEM_CACHE_REFRESH_TIMEOUT then
         self:ClearItemInfoRefresh()
+        return
+    end
+
+    if auctionListShown then
+        self:RefreshAuctionShoppingFrame(true)
+    end
+
+    if not mainShown then
         return
     end
 
@@ -1276,6 +1355,11 @@ function RB:RefreshItemInfoIfNeeded()
 
     if self.currentView == "detail" and self.detailItem then
         self:ShowDetail(self.detailItem, true)
+        return
+    end
+
+    if self.currentView == "shopping" then
+        self:RenderShoppingList(true)
         return
     end
 
@@ -1590,7 +1674,10 @@ function RB:UpdateSortButton()
         return
     end
 
-    if self.currentView == "root" then
+    if self.currentView == "shopping" then
+        self.frame.sortMode:SetText("Sort: Name")
+        self.frame.sortMode.tooltipText = "AH shopping list items are sorted by item name."
+    elseif self.currentView == "root" then
         self.frame.sortMode:SetText(CategorySortLabel(self:GetCategorySortMode()))
         self.frame.sortMode.tooltipText = "Cycle category sorting: default order, total amount, type count, or name."
     else
@@ -1610,6 +1697,925 @@ function RB:CycleSortMode()
 
     ReagentBankUIDB.sortMode = CycleItemSortMode(ReagentBankUIDB.sortMode)
     self:RequestCategory(self.currentCategoryId, 0)
+end
+
+function RB:NormalizeShoppingList()
+    ReagentBankUIDB = ReagentBankUIDB or {}
+
+    local source = ReagentBankUIDB.shoppingList
+    local normalized = {}
+
+    if type(source) == "table" then
+        for itemEntry, amount in pairs(source) do
+            itemEntry = tonumber(itemEntry)
+            amount = math.floor(tonumber(amount) or 0)
+
+            if itemEntry and itemEntry > 0 and amount > 0 then
+                itemEntry = math.floor(itemEntry)
+                normalized[itemEntry] = (normalized[itemEntry] or 0) + amount
+            end
+        end
+    end
+
+    ReagentBankUIDB.shoppingList = normalized
+    return normalized
+end
+
+function RB:GetShoppingListMap()
+    ReagentBankUIDB = ReagentBankUIDB or {}
+
+    if type(ReagentBankUIDB.shoppingList) ~= "table" then
+        ReagentBankUIDB.shoppingList = {}
+    end
+
+    return ReagentBankUIDB.shoppingList
+end
+
+function RB:GetShoppingListItems()
+    local items = BuildSortedItemsFromAmountMap(self:GetShoppingListMap())
+
+    table.sort(items, function(a, b)
+        local _, aName = GetItemDisplay(a.entry)
+        local _, bName = GetItemDisplay(b.entry)
+        aName = string.lower(tostring(aName or ""))
+        bName = string.lower(tostring(bName or ""))
+
+        if aName == bName then
+            return (tonumber(a.entry) or 0) < (tonumber(b.entry) or 0)
+        end
+
+        return aName < bName
+    end)
+
+    return items
+end
+
+function RB:GetShoppingListTotals()
+    local items = self:GetShoppingListItems()
+    local total = 0
+
+    for _, item in ipairs(items) do
+        total = total + (tonumber(item.amount) or 0)
+    end
+
+    return #items, total
+end
+
+function RB:AddShoppingListItem(itemEntry, amount, silent)
+    itemEntry = tonumber(itemEntry)
+    amount = math.floor(tonumber(amount) or 0)
+
+    if not itemEntry or itemEntry <= 0 then
+        if not silent then
+            self:Status("Choose a valid item first.", 1.00, 0.82, 0.32)
+        end
+        return false
+    end
+
+    if amount <= 0 then
+        if not silent then
+            self:Status("Enter an amount for the shopping list.", 1.00, 0.82, 0.32)
+        end
+        return false
+    end
+
+    itemEntry = math.floor(itemEntry)
+    local list = self:GetShoppingListMap()
+    list[itemEntry] = math.floor((tonumber(list[itemEntry]) or 0) + amount)
+
+    if not silent then
+        local _, name, link = GetItemDisplay(itemEntry)
+        local message = "Added " .. BuildItemAmountChatText(itemEntry, amount) .. " to the AH shopping list."
+        PrintAddon(message)
+        self:Status("Added " .. tostring(link or name or ("Item #" .. tostring(itemEntry))) .. " x" .. FormatCount(amount) .. " to AH list.", 0.45, 1.00, 0.45)
+    end
+
+    if self.currentView == "shopping" then
+        self:RenderShoppingList(true)
+    else
+        self:UpdateControls()
+    end
+    if not silent then
+        self:RefreshAuctionShoppingFrame(true)
+    end
+
+    return true
+end
+
+function RB:AddShoppingListRows(rows, sourceLabel)
+    local addedTypes = 0
+    local addedTotal = 0
+
+    for _, row in ipairs(rows or {}) do
+        local itemEntry = tonumber(row.itemEntry or row.entry)
+        local amount = math.floor(tonumber(row.amount) or 0)
+
+        if itemEntry and itemEntry > 0 and amount > 0 then
+            if self:AddShoppingListItem(itemEntry, amount, true) then
+                addedTypes = addedTypes + 1
+                addedTotal = addedTotal + amount
+            end
+        end
+    end
+
+    if addedTypes > 0 then
+        local label = sourceLabel and (" from " .. sourceLabel) or ""
+        PrintAddon("added " .. FormatCount(addedTotal) .. " reagent(s) across " .. tostring(addedTypes) .. " item type(s)" .. label .. " to the AH shopping list.")
+        self:Status("Added " .. FormatCount(addedTotal) .. " reagent(s) to the AH shopping list.", 0.45, 1.00, 0.45)
+        if self.currentView == "shopping" then
+            self:RenderShoppingList(true)
+        else
+            self:UpdateControls()
+        end
+        self:RefreshAuctionShoppingFrame(true)
+        return true
+    end
+
+    return false
+end
+
+function RB:RemoveShoppingListItem(itemEntry, silent)
+    itemEntry = tonumber(itemEntry)
+    if not itemEntry or itemEntry <= 0 then
+        return false
+    end
+
+    itemEntry = math.floor(itemEntry)
+    local list = self:GetShoppingListMap()
+    local amount = tonumber(list[itemEntry]) or 0
+
+    if amount <= 0 then
+        return false
+    end
+
+    list[itemEntry] = nil
+
+    if not silent then
+        PrintAddon("removed " .. BuildItemAmountChatText(itemEntry, amount) .. " from the AH shopping list.")
+        self:Status("Removed item from AH shopping list.", 0.82, 0.82, 0.82)
+    end
+
+    if self.currentView == "shopping" then
+        self:RenderShoppingList(true)
+    else
+        self:UpdateControls()
+    end
+    self:RefreshAuctionShoppingFrame(true)
+
+    return true
+end
+
+function RB:SetShoppingListItemAmount(itemEntry, amount, silent)
+    itemEntry = tonumber(itemEntry)
+    amount = math.floor(tonumber(amount) or 0)
+
+    if not itemEntry or itemEntry <= 0 then
+        return false
+    end
+
+    itemEntry = math.floor(itemEntry)
+
+    if amount <= 0 then
+        return self:RemoveShoppingListItem(itemEntry, silent)
+    end
+
+    local list = self:GetShoppingListMap()
+    list[itemEntry] = amount
+
+    if not silent then
+        PrintAddon("set AH shopping list amount: " .. BuildItemAmountChatText(itemEntry, amount) .. ".")
+        self:Status("Updated AH shopping list amount.", 0.45, 1.00, 0.45)
+    end
+
+    if self.currentView == "shopping" then
+        self:RenderShoppingList(true)
+    else
+        self:UpdateControls()
+    end
+    self:RefreshAuctionShoppingFrame(true)
+
+    return true
+end
+
+function RB:ClearShoppingList()
+    ReagentBankUIDB = ReagentBankUIDB or {}
+    ReagentBankUIDB.shoppingList = {}
+    self:HideShoppingAmountPrompt()
+
+    PrintAddon("AH shopping list cleared.")
+    self:Status("AH shopping list cleared.", 0.82, 0.82, 0.82)
+
+    if self.currentView == "shopping" then
+        self:RenderShoppingList(true)
+    else
+        self:UpdateControls()
+    end
+    self:RefreshAuctionShoppingFrame(true)
+end
+
+function RB:GetShoppingPromptAmount()
+    if not self.frame or not self.frame.shoppingPromptBox then
+        return 0
+    end
+
+    local amount = tonumber(self.frame.shoppingPromptBox:GetText() or "") or 0
+    amount = math.floor(amount)
+
+    if amount < 0 then
+        amount = 0
+    end
+
+    return amount
+end
+
+function RB:HideShoppingAmountPrompt()
+    self.shoppingPromptItem = nil
+
+    if self.frame and self.frame.shoppingPrompt then
+        self.frame.shoppingPrompt:Hide()
+    end
+
+    if self.frame and self.frame.shoppingPromptBox then
+        self.frame.shoppingPromptBox:SetText("")
+        self.frame.shoppingPromptBox:ClearFocus()
+    end
+
+    self:UpdateControls()
+end
+
+function RB:UpdateShoppingAmountPromptControls()
+    if not self.frame or not self.frame.shoppingPrompt then
+        return
+    end
+
+    local item = self.shoppingPromptItem
+    local amount = self:GetShoppingPromptAmount()
+    local enabled = self.busyKind == nil and item ~= nil and amount > 0
+
+    if self.frame.shoppingPromptHint then
+        if amount <= 0 then
+            self.frame.shoppingPromptHint:SetText("Enter a number above 0, or use Remove.")
+            self.frame.shoppingPromptHint:SetTextColor(1.00, 0.82, 0.32)
+        else
+            self.frame.shoppingPromptHint:SetText("This replaces the amount on your AH shopping list.")
+            self.frame.shoppingPromptHint:SetTextColor(0.78, 0.82, 0.88)
+        end
+    end
+
+    self:SetButtonEnabled(self.frame.shoppingPromptUpdate, enabled)
+    self:SetButtonEnabled(self.frame.shoppingPromptRemove, self.busyKind == nil and item ~= nil)
+    self:SetButtonEnabled(self.frame.shoppingPromptCancel, true)
+end
+
+function RB:ShowShoppingAmountPrompt(item)
+    if not item or not item.entry then
+        return
+    end
+
+    self:CreateFrame()
+    self:HideWithdrawPrompt()
+
+    local currentAmount = tonumber(item.amount) or 0
+    if currentAmount <= 0 then
+        self:RenderShoppingList(true)
+        return
+    end
+
+    self.shoppingPromptItem = {
+        entry = math.floor(tonumber(item.entry) or 0),
+        amount = math.floor(currentAmount),
+    }
+
+    HideTooltip()
+
+    local f = self.frame
+    local icon, name, link = GetItemDisplay(item.entry)
+
+    f.shoppingPromptIcon:SetTexture(icon)
+    f.shoppingPromptName:SetText(link or name)
+    f.shoppingPromptCurrent:SetText("Current list amount: x" .. FormatCount(currentAmount))
+    f.shoppingPromptBox:SetText(tostring(math.floor(currentAmount)))
+    f.shoppingPromptBox:SetFocus()
+    f.shoppingPromptBox:HighlightText()
+    f.shoppingPrompt:Show()
+    f.shoppingPrompt:SetFrameLevel((f:GetFrameLevel() or 1) + 82)
+
+    self:UpdateShoppingAmountPromptControls()
+    self:Status("Edit AH shopping list amount for " .. tostring(name or ("Item #" .. tostring(item.entry))) .. ".", 0.82, 0.82, 0.82)
+end
+
+function RB:ApplyShoppingAmountPrompt()
+    local item = self.shoppingPromptItem
+    if not item or not item.entry then
+        self:HideShoppingAmountPrompt()
+        return
+    end
+
+    local amount = self:GetShoppingPromptAmount()
+    if amount <= 0 then
+        self:Status("Enter a number above 0, or use Remove.", 1.00, 0.82, 0.32)
+        self:UpdateShoppingAmountPromptControls()
+        return
+    end
+
+    local itemEntry = item.entry
+    self:HideShoppingAmountPrompt()
+    self:SetShoppingListItemAmount(itemEntry, amount)
+end
+
+function RB:RemoveShoppingPromptItem()
+    local item = self.shoppingPromptItem
+    if not item or not item.entry then
+        self:HideShoppingAmountPrompt()
+        return
+    end
+
+    local itemEntry = item.entry
+    self:HideShoppingAmountPrompt()
+    self:RemoveShoppingListItem(itemEntry)
+end
+
+function RB:GetDetailShoppingAmount()
+    if not self.frame or not self.frame.shoppingAmountBox then
+        return 0
+    end
+
+    local amount = tonumber(self.frame.shoppingAmountBox:GetText() or "") or 0
+    amount = math.floor(amount)
+
+    if amount < 0 then
+        amount = 0
+    end
+
+    return amount
+end
+
+function RB:AddDetailItemToShoppingList()
+    if not self.detailItem or not self.detailItem.entry then
+        self:Status("Choose an item first.", 1.00, 0.82, 0.32)
+        return
+    end
+
+    local amount = self:GetDetailShoppingAmount()
+    if self:AddShoppingListItem(self.detailItem.entry, amount) and self.frame and self.frame.shoppingAmountBox then
+        self.frame.shoppingAmountBox:SetText("")
+        self.frame.shoppingAmountBox:ClearFocus()
+    end
+end
+
+function RB:ImportSelectedRecipeToShoppingList()
+    local reagents, errText, recipeName, repeatCount = self:GetSelectedTradeSkillReagents()
+
+    if errText then
+        PrintAddon(errText)
+        self:Status(errText, 1.00, 0.82, 0.32)
+        return false
+    end
+
+    if not reagents or #reagents == 0 then
+        local message = "No reagent shopping list needed for the selected recipe."
+        PrintAddon(message)
+        self:Status(message, 0.45, 1.00, 0.45)
+        return true
+    end
+
+    repeatCount = self:ClampTradeSkillPrepareCount(repeatCount or 1)
+    local plan = self:BuildTradeSkillShoppingPlan(reagents, repeatCount, self:GetLowStockCraftCount())
+
+    if not plan.bankReady then
+        self.pendingShoppingListImport = {
+            key = self:BuildTradeSkillReagentKey(reagents),
+            reagents = reagents,
+            recipeName = recipeName,
+            repeatCount = repeatCount,
+            createdAt = GetTime(),
+        }
+
+        local message = "Checking reagent bank stock. Missing AH reagents will be added when the check finishes."
+        PrintAddon(message)
+        self:Status(message, 1.00, 0.82, 0.32)
+        self:UpdateTradeSkillControls()
+        return false
+    end
+
+    if not plan.missing or #plan.missing == 0 then
+        local message = "Bags and bank already cover the selected recipe."
+        PrintAddon(message)
+        self:Status(message, 0.45, 1.00, 0.45)
+        return true
+    end
+
+    return self:AddShoppingListRows(plan.missing, tostring(repeatCount) .. " craft(s) of " .. tostring(recipeName or "selected recipe"))
+end
+
+function RB:CompletePendingShoppingListImport(completedKey)
+    local pending = self.pendingShoppingListImport
+    if not pending then
+        return false
+    end
+
+    if pending.createdAt and GetTime() - pending.createdAt > SHOPPING_LIST_IMPORT_TIMEOUT then
+        self.pendingShoppingListImport = nil
+        return false
+    end
+
+    if completedKey and pending.key and completedKey ~= pending.key then
+        return false
+    end
+
+    local plan = self:BuildTradeSkillShoppingPlan(pending.reagents, pending.repeatCount, self:GetLowStockCraftCount())
+    if not plan.bankReady then
+        return false
+    end
+
+    self.pendingShoppingListImport = nil
+
+    if not plan.missing or #plan.missing == 0 then
+        local message = "Bags and bank already cover " .. tostring(pending.recipeName or "the selected recipe") .. "."
+        PrintAddon(message)
+        self:Status(message, 0.45, 1.00, 0.45)
+        return true
+    end
+
+    return self:AddShoppingListRows(plan.missing, tostring(pending.repeatCount or 1) .. " craft(s) of " .. tostring(pending.recipeName or "selected recipe"))
+end
+
+function RB:PrintShoppingList()
+    local items = self:GetShoppingListItems()
+
+    if not items or #items == 0 then
+        PrintAddon("AH shopping list is empty.")
+        self:Status("AH shopping list is empty.", 0.82, 0.82, 0.82)
+        return false
+    end
+
+    local total = 0
+    for _, item in ipairs(items) do
+        total = total + (tonumber(item.amount) or 0)
+    end
+
+    PrintAddon("AH shopping list: " .. FormatCount(total) .. " reagent(s) across " .. tostring(#items) .. " item type(s).")
+    PrintAddon("buy: " .. self:FormatTradeSkillPlanItems(items, SHOPPING_LIST_CHAT_ITEM_LIMIT))
+    self:Status("Printed AH shopping list to chat.", 0.45, 1.00, 0.45)
+    return true
+end
+
+function RB:SearchAuctionHouseForItem(itemEntry)
+    itemEntry = tonumber(itemEntry)
+    if not itemEntry or itemEntry <= 0 then
+        self:Status("Choose an item to search for.", 1.00, 0.82, 0.32)
+        return false
+    end
+
+    local _, name = GetItemDisplay(itemEntry)
+    name = Trim(name or "")
+
+    if name == "" or string.match(name, "^Item #") then
+        self:Status("Item info is still loading. Try again in a moment.", 1.00, 0.82, 0.32)
+        self:QueueItemInfoRefresh()
+        return false
+    end
+
+    if not AuctionFrame or not AuctionFrame:IsShown() then
+        self:Status("Open the Auction House, then click an AH list row to search.", 1.00, 0.82, 0.32)
+        return false
+    end
+
+    if AuctionFrameTab1 and AuctionFrameTab1.Click then
+        AuctionFrameTab1:Click()
+    end
+
+    if AuctionFrameBrowse then
+        AuctionFrameBrowse:Show()
+    end
+
+    if BrowseName and BrowseName.SetText then
+        BrowseName:SetText(name)
+        BrowseName:SetFocus()
+        BrowseName:HighlightText()
+    else
+        self:Status("Auction House search box was not found.", 1.00, 0.82, 0.32)
+        return false
+    end
+
+    if BrowseSearchButton and BrowseSearchButton.Click and BrowseSearchButton:IsEnabled() then
+        BrowseSearchButton:Click()
+        self:Status("Searching Auction House for " .. name .. ".", 0.45, 1.00, 0.45)
+        return true
+    end
+
+    if QueryAuctionItems then
+        QueryAuctionItems(name, nil, nil, 0, 0, 0, 0, 0, 0)
+        self:Status("Searching Auction House for " .. name .. ".", 0.45, 1.00, 0.45)
+        return true
+    end
+
+    self:Status("Auction House search is not ready yet.", 1.00, 0.82, 0.32)
+    return false
+end
+
+function RB:PositionAuctionShoppingFrame()
+    local frame = self.auctionShoppingFrame
+    if not frame then
+        return
+    end
+
+    local parent = _G.AuctionFrame or UIParent
+    if frame:GetParent() ~= parent then
+        frame:SetParent(parent)
+    end
+
+    frame:ClearAllPoints()
+    if parent and parent ~= UIParent then
+        frame:SetPoint("TOPLEFT", parent, "TOPRIGHT", AUCTION_SHOPPING_FRAME_GAP, 0)
+        if frame.SetFrameLevel and parent.GetFrameLevel then
+            frame:SetFrameLevel((parent:GetFrameLevel() or 1) + 20)
+        end
+    else
+        frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    end
+end
+
+function RB:CreateAuctionShoppingFrame()
+    if self.auctionShoppingFrame then
+        return
+    end
+
+    local parent = _G.AuctionFrame or UIParent
+    local frame = CreateFrame("Frame", "ReagentBankUIAuctionShoppingFrame", parent)
+    frame:SetWidth(AUCTION_SHOPPING_FRAME_WIDTH)
+    frame:SetHeight(AUCTION_SHOPPING_FRAME_HEIGHT)
+    frame:SetClampedToScreen(true)
+    frame:EnableMouse(true)
+    frame:SetFrameStrata("DIALOG")
+    self:MakeBackdrop(frame, 0.98, true)
+    frame:Hide()
+
+    frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    frame.title:SetPoint("TOPLEFT", 12, -12)
+    frame.title:SetPoint("RIGHT", -40, 0)
+    frame.title:SetJustifyH("LEFT")
+    frame.title:SetText("AH Shopping List")
+    frame.title:SetTextColor(1.00, 0.82, 0.28)
+
+    frame.close = self:CreateCloseButton(frame)
+    frame.close:SetPoint("TOPRIGHT", -8, -8)
+    frame.close:SetScript("OnClick", function()
+        RB:HideAuctionShoppingFrame(true)
+    end)
+
+    frame.summary = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.summary:SetPoint("TOPLEFT", 12, -38)
+    frame.summary:SetPoint("RIGHT", -12, 0)
+    frame.summary:SetJustifyH("LEFT")
+    frame.summary:SetTextColor(0.78, 0.82, 0.88)
+    frame.summary:SetText("")
+
+    frame.header = CreateFrame("Frame", nil, frame)
+    frame.header:SetHeight(22)
+    frame.header:SetPoint("TOPLEFT", 8, -62)
+    frame.header:SetPoint("RIGHT", -8, 0)
+
+    frame.header.bg = frame.header:CreateTexture(nil, "BACKGROUND")
+    frame.header.bg:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
+    frame.header.bg:SetAllPoints(frame.header)
+    frame.header.bg:SetVertexColor(SKIN.listHeaderBg[1], SKIN.listHeaderBg[2], SKIN.listHeaderBg[3], 0.72)
+
+    frame.headerName = frame.header:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    frame.headerName:SetPoint("LEFT", 30, 0)
+    frame.headerName:SetJustifyH("LEFT")
+    frame.headerName:SetText("Item")
+
+    frame.headerCount = frame.header:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    frame.headerCount:SetPoint("RIGHT", -7, 0)
+    frame.headerCount:SetJustifyH("RIGHT")
+    frame.headerCount:SetText("Need / Bags")
+
+    frame.rows = {}
+    for index = 1, AUCTION_SHOPPING_ROW_COUNT do
+        local row = CreateFrame("Button", nil, frame, "ReagentBankUIListRowTemplate")
+        row:SetHeight(ROW_HEIGHT)
+        row:SetPoint("LEFT", 8, 0)
+        row:SetPoint("RIGHT", -8, 0)
+
+        if index == 1 then
+            row:SetPoint("TOP", frame.header, "BOTTOM", 0, -2)
+        else
+            row:SetPoint("TOP", frame.rows[index - 1], "BOTTOM", 0, -ROW_SPACING)
+        end
+
+        if row.fill then
+            row.fill:SetHeight(ROW_HEIGHT)
+            row.fill:SetWidth(1)
+            row.fill:Hide()
+        end
+
+        if row.hover then
+            row:SetHighlightTexture(row.hover)
+        end
+
+        if row.text then
+            row.text:ClearAllPoints()
+            row.text:SetPoint("LEFT", row.icon, "RIGHT", 8, 0)
+            row.text:SetPoint("RIGHT", -92, 0)
+        end
+
+        if row.count then
+            row.count:SetWidth(82)
+            row.count:ClearAllPoints()
+            row.count:SetPoint("RIGHT", -7, 0)
+        end
+
+        if (index % 2) == 0 then
+            SetTextureColor(row.bg, SKIN.rowEven)
+        else
+            SetTextureColor(row.bg, SKIN.rowOdd)
+        end
+        SetTextureColor(row.fill, SKIN.rowFill)
+        SetTextureColor(row.hover, SKIN.rowHover)
+        SetFontColor(row.count, SKIN.blueText)
+
+        row:RegisterForClicks("LeftButtonUp")
+        row:SetScript("OnClick", function(selfRow)
+            if selfRow.item and selfRow.item.entry then
+                RB:SearchAuctionHouseForItem(selfRow.item.entry)
+            end
+        end)
+        row:SetScript("OnEnter", function(selfRow)
+            if selfRow.item and selfRow.item.entry then
+                SetTooltipItem(selfRow.item.entry)
+            end
+        end)
+        row:SetScript("OnLeave", HideTooltip)
+
+        frame.rows[index] = row
+    end
+
+    frame.prev = self:CreateButton(frame, 70, 22, "Prev")
+    frame.prev:SetPoint("BOTTOMLEFT", 10, 34)
+    frame.prev:SetScript("OnClick", function()
+        local page = tonumber(frame.page) or 0
+        if page > 0 then
+            frame.page = page - 1
+            RB:RefreshAuctionShoppingFrame(true)
+        end
+    end)
+
+    frame.next = self:CreateButton(frame, 70, 22, "Next")
+    frame.next:SetPoint("LEFT", frame.prev, "RIGHT", 8, 0)
+    frame.next:SetScript("OnClick", function()
+        local page = tonumber(frame.page) or 0
+        local totalPages = math.max(tonumber(frame.totalPages) or 1, 1)
+        if page + 1 < totalPages then
+            frame.page = page + 1
+            RB:RefreshAuctionShoppingFrame(true)
+        end
+    end)
+
+    frame.pageText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.pageText:SetPoint("LEFT", frame.next, "RIGHT", 8, 0)
+    frame.pageText:SetPoint("RIGHT", -10, 0)
+    frame.pageText:SetJustifyH("RIGHT")
+    frame.pageText:SetText("")
+
+    frame.status = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    frame.status:SetPoint("BOTTOMLEFT", 10, 12)
+    frame.status:SetPoint("RIGHT", -10, 0)
+    frame.status:SetJustifyH("LEFT")
+    frame.status:SetText("")
+
+    self.auctionShoppingFrame = frame
+    self:ApplySkin()
+    self:PositionAuctionShoppingFrame()
+end
+
+function RB:UpdateAuctionShoppingControls()
+    local frame = self.auctionShoppingFrame
+    if not frame then
+        return
+    end
+
+    local page = tonumber(frame.page) or 0
+    local totalPages = math.max(tonumber(frame.totalPages) or 1, 1)
+    self:SetButtonEnabled(frame.prev, page > 0)
+    self:SetButtonEnabled(frame.next, page + 1 < totalPages)
+end
+
+function RB:ClearAuctionShoppingRows()
+    local frame = self.auctionShoppingFrame
+    if not frame or not frame.rows then
+        return
+    end
+
+    for _, row in ipairs(frame.rows) do
+        row.item = nil
+        if row.fill then
+            row.fill:SetWidth(1)
+            row.fill:Hide()
+        end
+        row.icon:Show()
+        row.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+        row.text:SetText("")
+        row.count:SetText("")
+        row:Hide()
+    end
+end
+
+function RB:SetAuctionShoppingEmptyRow(text)
+    local frame = self.auctionShoppingFrame
+    if not frame or not frame.rows or not frame.rows[1] then
+        return
+    end
+
+    local row = frame.rows[1]
+    row.item = nil
+    if row.fill then
+        row.fill:SetWidth(1)
+        row.fill:Hide()
+    end
+    row.icon:Show()
+    row.icon:SetTexture("Interface\\Icons\\INV_Misc_Bag_10")
+    row.text:SetText(text or "AH shopping list is empty.")
+    row.count:SetText("")
+    row:Show()
+end
+
+function RB:RefreshAuctionShoppingFrame(preservePage)
+    local frame = self.auctionShoppingFrame
+    if not frame then
+        return
+    end
+
+    self:NormalizeShoppingList()
+
+    local items = self:GetShoppingListItems()
+    local total = 0
+    local maxAmount = 0
+    for _, item in ipairs(items) do
+        local amount = tonumber(item.amount) or 0
+        total = total + amount
+        if amount > maxAmount then
+            maxAmount = amount
+        end
+    end
+
+    local totalPages = math.max(math.ceil(#items / AUCTION_SHOPPING_ROW_COUNT), 1)
+    local page = preservePage and (tonumber(frame.page) or 0) or 0
+    if page < 0 then
+        page = 0
+    elseif page >= totalPages then
+        page = totalPages - 1
+    end
+
+    frame.page = page
+    frame.totalPages = totalPages
+    frame.summary:SetText(FormatCount(total) .. " reagent(s) across " .. tostring(#items) .. " item type(s)")
+    frame.pageText:SetText("Page " .. tostring(page + 1) .. "/" .. tostring(totalPages))
+
+    self:ClearAuctionShoppingRows()
+
+    local missingItemInfo = false
+    local startIndex = (page * AUCTION_SHOPPING_ROW_COUNT) + 1
+
+    for rowIndex = 1, AUCTION_SHOPPING_ROW_COUNT do
+        local item = items[startIndex + rowIndex - 1]
+        local row = frame.rows[rowIndex]
+        if row and item then
+            local icon, name, link, stackCount, missingInfo = GetItemDisplay(item.entry)
+            if missingInfo then
+                missingItemInfo = true
+            end
+
+            local bagCount = 0
+            if GetItemCount then
+                bagCount = tonumber(GetItemCount(item.entry, false)) or 0
+            end
+
+            row.item = item
+            row.icon:SetTexture(icon)
+            row.text:SetText(link or name)
+            row.count:SetText("x" .. FormatCount(item.amount) .. " / x" .. FormatCount(bagCount))
+            self:SetRowFill(row, item.amount, maxAmount)
+            row:Show()
+        end
+    end
+
+    if #items == 0 then
+        self:SetAuctionShoppingEmptyRow("AH shopping list is empty.")
+        missingItemInfo = false
+    end
+
+    if missingItemInfo then
+        self:QueueItemInfoRefresh()
+    elseif not (self.frame and self.frame:IsShown()) then
+        self:ClearItemInfoRefresh()
+    end
+
+    self:UpdateAuctionShoppingControls()
+end
+
+function RB:ShowAuctionShoppingFrame()
+    if self.auctionShoppingFrameDismissed then
+        return
+    end
+
+    self:CreateAuctionShoppingFrame()
+    self:PositionAuctionShoppingFrame()
+    self:RefreshAuctionShoppingFrame()
+    self.auctionShoppingFrame:Show()
+    self:Status("Left-click an item here to search the Auction House.", 0.82, 0.82, 0.82)
+end
+
+function RB:HideAuctionShoppingFrame(dismissed)
+    if dismissed then
+        self.auctionShoppingFrameDismissed = true
+    end
+
+    if self.auctionShoppingFrame then
+        self.auctionShoppingFrame:Hide()
+    end
+end
+
+function RB:ShowShoppingList()
+    self:CreateFrame()
+    self.frame:Show()
+    self:RenderShoppingList()
+end
+
+function RB:HandleShoppingListSlash(value)
+    value = Trim(value or "")
+
+    local subCommand, rest = string.match(value, "^(%S+)%s*(.-)$")
+    subCommand = string.lower(subCommand or "")
+    rest = Trim(rest or "")
+
+    if subCommand == "" or subCommand == "show" or subCommand == "open" or subCommand == "list" then
+        self:ShowShoppingList()
+        return
+    end
+
+    if tonumber(subCommand) and rest == "" then
+        self:SetTradeSkillPrepareCount(tonumber(subCommand), true)
+        self:PrintTradeSkillShoppingList()
+        self:UpdateTradeSkillControls()
+        return
+    end
+
+    if subCommand == "plan" then
+        local count = tonumber(rest)
+        if count then
+            self:SetTradeSkillPrepareCount(count, true)
+        end
+        self:PrintTradeSkillShoppingList()
+        self:UpdateTradeSkillControls()
+        return
+    end
+
+    if subCommand == "recipe" or subCommand == "import" or subCommand == "fromrecipe" then
+        self:ImportSelectedRecipeToShoppingList()
+        return
+    end
+
+    if subCommand == "print" then
+        self:PrintShoppingList()
+        return
+    end
+
+    if subCommand == "clear" or subCommand == "reset" then
+        self:ClearShoppingList()
+        return
+    end
+
+    if subCommand == "remove" or subCommand == "delete" then
+        local itemEntry = ParseItemIdFromLink(rest) or tonumber(string.match(rest, "^(%d+)"))
+        if not self:RemoveShoppingListItem(itemEntry) then
+            PrintAddon("usage: /rbank ahlist remove itemId")
+        end
+        return
+    end
+
+    if subCommand == "add" then
+        local itemEntry = ParseItemIdFromLink(rest) or tonumber(string.match(rest, "^(%d+)"))
+        local amount = tonumber(string.match(rest, "%s(%d+)%s*$")) or 1
+        if not self:AddShoppingListItem(itemEntry, amount) then
+            PrintAddon("usage: /rbank ahlist add itemId amount")
+        end
+        return
+    end
+
+    if tonumber(subCommand) and rest ~= "" then
+        self:AddShoppingListItem(tonumber(subCommand), tonumber(rest) or 1)
+        return
+    end
+
+    local directItemEntry = ParseItemIdFromLink(value)
+    if directItemEntry then
+        local amount = tonumber(string.match(value, "%s(%d+)%s*$")) or 1
+        self:AddShoppingListItem(directItemEntry, amount)
+        return
+    end
+
+    PrintAddon("shopping list commands: /rbank ahlist, /rbank ahlist recipe, /rbank ahlist add itemId amount, /rbank ahlist print, /rbank ahlist clear")
 end
 
 function RB:BuildItemAmountCommands(prefix, items, maxPairs)
@@ -1651,6 +2657,7 @@ end
 
 function RB:RequestRoot()
     self:HideDepositPreview()
+    self:HideShoppingAmountPrompt()
     self.pendingRefresh = nil
     self.awaitingView = "root"
 
@@ -1661,6 +2668,7 @@ end
 function RB:RequestCategory(categoryId, page)
     self:HideWithdrawPrompt()
     self:HideDepositPreview()
+    self:HideShoppingAmountPrompt()
     categoryId = tonumber(categoryId)
     page = tonumber(page) or 0
 
@@ -2465,15 +3473,235 @@ function RB:GetTradeSkillCraftability(reagents, repeatCount)
     }
 end
 
+function RB:GetLowStockCraftCount()
+    ReagentBankUIDB = ReagentBankUIDB or {}
+    return self:ClampTradeSkillPrepareCount(tonumber(ReagentBankUIDB.lowStockCrafts) or LOW_STOCK_DEFAULT_CRAFTS)
+end
+
+function RB:SetLowStockCraftCount(value)
+    ReagentBankUIDB = ReagentBankUIDB or {}
+    ReagentBankUIDB.lowStockCrafts = self:ClampTradeSkillPrepareCount(value or LOW_STOCK_DEFAULT_CRAFTS)
+    self:UpdateTradeSkillControls()
+    PrintAddon("low-stock alerts check enough reagents for " .. tostring(ReagentBankUIDB.lowStockCrafts) .. " craft(s).")
+    return ReagentBankUIDB.lowStockCrafts
+end
+
+function RB:GetTradeSkillBankCounts(reagents)
+    local key = self:BuildTradeSkillReagentKey(reagents)
+    local ready = key ~= "" and self.tradeSkillBankCountsKey == key
+
+    if not ready then
+        self:RequestTradeSkillBankCounts(reagents)
+    end
+
+    return ready, ready and self.tradeSkillBankCounts or {}
+end
+
+function RB:BuildTradeSkillShoppingPlan(reagents, repeatCount, lowStockCrafts)
+    repeatCount = self:ClampTradeSkillPrepareCount(repeatCount or 1)
+    lowStockCrafts = self:ClampTradeSkillPrepareCount(lowStockCrafts or self:GetLowStockCraftCount())
+
+    local bankReady, bankCounts = self:GetTradeSkillBankCounts(reagents)
+    local plan = {
+        bankReady = bankReady,
+        repeatCount = repeatCount,
+        lowStockCrafts = lowStockCrafts,
+        needs = {},
+        withdraw = {},
+        missing = {},
+        lowStock = {},
+    }
+
+    for _, reagent in ipairs(reagents or {}) do
+        local itemEntry = tonumber(reagent.itemEntry or reagent.entry)
+        local requiredPerCraft = math.floor(tonumber(reagent.requiredPerCraft) or 0)
+
+        if itemEntry and itemEntry > 0 and requiredPerCraft > 0 then
+            local bagCount = 0
+            if GetItemCount then
+                bagCount = tonumber(GetItemCount(itemEntry, false)) or 0
+            end
+            if bagCount <= 0 and reagent.bagCount then
+                bagCount = tonumber(reagent.bagCount) or 0
+            end
+
+            local bankCount = bankReady and (tonumber(bankCounts[itemEntry]) or 0) or 0
+            local required = requiredPerCraft * repeatCount
+            local neededFromBags = math.max(0, required - bagCount)
+            local itemName = reagent.name or GetItemChatText(itemEntry)
+
+            if neededFromBags > 0 then
+                local row = {
+                    entry = itemEntry,
+                    name = itemName,
+                    amount = neededFromBags,
+                    bagCount = bagCount,
+                    bankCount = bankCount,
+                    required = required,
+                }
+                table.insert(plan.needs, row)
+
+                if bankReady then
+                    local withdrawAmount = math.min(neededFromBags, bankCount)
+                    if withdrawAmount > 0 then
+                        table.insert(plan.withdraw, {
+                            entry = itemEntry,
+                            name = itemName,
+                            amount = withdrawAmount,
+                            bagCount = bagCount,
+                            bankCount = bankCount,
+                            required = required,
+                        })
+                    end
+
+                    if neededFromBags > bankCount then
+                        table.insert(plan.missing, {
+                            entry = itemEntry,
+                            name = itemName,
+                            amount = neededFromBags - bankCount,
+                            bagCount = bagCount,
+                            bankCount = bankCount,
+                            required = required,
+                        })
+                    end
+                end
+            end
+
+            if bankReady then
+                local lowStockRequired = requiredPerCraft * lowStockCrafts
+                local totalStock = bagCount + bankCount
+                if totalStock < lowStockRequired then
+                    table.insert(plan.lowStock, {
+                        entry = itemEntry,
+                        name = itemName,
+                        amount = lowStockRequired - totalStock,
+                        bagCount = bagCount,
+                        bankCount = bankCount,
+                        required = lowStockRequired,
+                    })
+                end
+            end
+        end
+    end
+
+    return plan
+end
+
+function RB:FormatTradeSkillPlanItems(rows, limit)
+    local parts = {}
+    limit = math.max(1, tonumber(limit) or TRADE_SKILL_SHOPPING_LIST_LIMIT)
+
+    for index, row in ipairs(rows or {}) do
+        if index > limit then
+            break
+        end
+        table.insert(parts, BuildItemAmountChatText(row.entry, row.amount))
+    end
+
+    if rows and #rows > limit then
+        table.insert(parts, "+" .. tostring(#rows - limit) .. " more")
+    end
+
+    if #parts == 0 then
+        return "none"
+    end
+
+    return table.concat(parts, ", ")
+end
+
 function RB:UpdateTradeSkillStatsText()
     if not self.tradeSkillStatsText then
         return
     end
 
-    -- Disabled intentionally: this stats line queried bank craftability on every
-    -- trade-skill update/search and could cause heavy blanket scans.
-    self.tradeSkillStatsText:SetText("")
-    self.tradeSkillStatsText:Hide()
+    local reagents, errText, recipeName, repeatCount = self:GetSelectedTradeSkillReagents()
+    if errText then
+        self.tradeSkillStatsText:SetText(errText)
+        self.tradeSkillStatsText:Show()
+        return
+    end
+
+    if not reagents or #reagents == 0 then
+        self.tradeSkillStatsText:SetText("No reagent plan needed.")
+        self.tradeSkillStatsText:Show()
+        return
+    end
+
+    repeatCount = self:ClampTradeSkillPrepareCount(repeatCount or 1)
+    local plan = self:BuildTradeSkillShoppingPlan(reagents, repeatCount, self:GetLowStockCraftCount())
+    local lines = {}
+
+    if not plan.bankReady then
+        if #plan.needs > 0 then
+            table.insert(lines, "Shopping list x" .. tostring(repeatCount) .. ": " .. self:FormatTradeSkillPlanItems(plan.needs, TRADE_SKILL_SHOPPING_LIST_LIMIT) .. " (checking bank)")
+        else
+            table.insert(lines, "Ready x" .. tostring(repeatCount) .. " from bags. Checking bank stock...")
+        end
+    elseif #plan.withdraw > 0 then
+        table.insert(lines, "Withdraw x" .. tostring(repeatCount) .. ": " .. self:FormatTradeSkillPlanItems(plan.withdraw, TRADE_SKILL_SHOPPING_LIST_LIMIT))
+    elseif #plan.needs == 0 then
+        table.insert(lines, "Ready x" .. tostring(repeatCount) .. " from bags.")
+    else
+        table.insert(lines, "Bank cannot cover bag needs for x" .. tostring(repeatCount) .. ".")
+    end
+
+    if plan.bankReady and #plan.missing > 0 then
+        table.insert(lines, "Missing: " .. self:FormatTradeSkillPlanItems(plan.missing, TRADE_SKILL_SHOPPING_LIST_LIMIT))
+    elseif plan.bankReady and #plan.lowStock > 0 then
+        table.insert(lines, "Low stock < x" .. tostring(plan.lowStockCrafts) .. ": " .. self:FormatTradeSkillPlanItems(plan.lowStock, TRADE_SKILL_SHOPPING_LIST_LIMIT))
+    end
+
+    self.tradeSkillStatsText:SetText(table.concat(lines, "\n"))
+    self.tradeSkillStatsText:Show()
+end
+
+function RB:PrintTradeSkillShoppingList()
+    local reagents, errText, recipeName, repeatCount = self:GetSelectedTradeSkillReagents()
+
+    if errText then
+        PrintAddon(errText)
+        return false
+    end
+
+    if not reagents or #reagents == 0 then
+        PrintAddon("No reagent plan needed for the selected recipe.")
+        return true
+    end
+
+    repeatCount = self:ClampTradeSkillPrepareCount(repeatCount or 1)
+    local plan = self:BuildTradeSkillShoppingPlan(reagents, repeatCount, self:GetLowStockCraftCount())
+
+    PrintAddon("shopping list for " .. tostring(repeatCount) .. " craft(s) of " .. tostring(recipeName or "selected recipe") .. ":")
+
+    if not plan.bankReady then
+        if #plan.needs > 0 then
+            PrintAddon("bag needs: " .. self:FormatTradeSkillPlanItems(plan.needs, 10))
+        else
+            PrintAddon("bags already cover this recipe.")
+        end
+        PrintAddon("checking reagent bank stock; run /rbank plan again in a moment.")
+        return true
+    end
+
+    if #plan.withdraw > 0 then
+        PrintAddon("withdraw: " .. self:FormatTradeSkillPlanItems(plan.withdraw, 10))
+    elseif #plan.needs == 0 then
+        PrintAddon("bags already cover this recipe.")
+    else
+        PrintAddon("nothing withdrawable in bank for the missing bag reagents.")
+    end
+
+    if #plan.missing > 0 then
+        PrintAddon("missing after bank: " .. self:FormatTradeSkillPlanItems(plan.missing, 10))
+    else
+        PrintAddon("bank covers the missing bag reagents.")
+    end
+
+    if #plan.lowStock > 0 then
+        PrintAddon("low stock below " .. tostring(plan.lowStockCrafts) .. " craft(s): " .. self:FormatTradeSkillPlanItems(plan.lowStock, 10))
+    end
+
+    return true
 end
 
 function RB:GetSelectedTradeSkillNeeds()
@@ -3349,6 +4577,34 @@ function RB:UpdateTradeSkillControls()
     self:SetButtonEnabled(self.tradeSkillMinusButton, repeatCount > TRADE_SKILL_PREPARE_COUNT_MIN)
     self:SetButtonEnabled(self.tradeSkillPlusButton, repeatCount < TRADE_SKILL_PREPARE_COUNT_MAX)
 
+    local shoppingPending = self.pendingShoppingListImport ~= nil
+    if shoppingPending and self.pendingShoppingListImport.createdAt and GetTime() - self.pendingShoppingListImport.createdAt > SHOPPING_LIST_IMPORT_TIMEOUT then
+        self.pendingShoppingListImport = nil
+        shoppingPending = false
+    end
+
+    local shoppingEnabled = enabled and needs and #needs > 0 and not shoppingPending
+    self:SetButtonEnabled(self.tradeSkillShoppingButton, shoppingEnabled)
+
+    if self.tradeSkillShoppingButton then
+        if shoppingPending then
+            self.tradeSkillShoppingButton:SetText("Adding...")
+            self.tradeSkillShoppingButton.tooltipText = "Waiting for reagent bank counts, then missing AH reagents will be added to your shopping list."
+        else
+            self.tradeSkillShoppingButton:SetText("Add to AH List")
+            if errText then
+                self.tradeSkillShoppingButton.tooltipText = errText
+            elseif needs and #needs > 0 then
+                self.tradeSkillShoppingButton.tooltipText =
+                    "Add reagents for " .. tostring(repeatCount) .. " craft(s) of " .. tostring(recipeName or "selected recipe") ..
+                    " that your bags and reagent bank cannot cover."
+            else
+                self.tradeSkillShoppingButton.tooltipText =
+                    "You already have the selected recipe reagents in your bags for " .. tostring(repeatCount) .. " craft(s)."
+            end
+        end
+    end
+
     if self.tradeSkillQuantityBox and not self.tradeSkillQuantityBox:HasFocus() then
         local textValue = tostring(repeatCount)
         if self.tradeSkillQuantityBox:GetText() ~= textValue then
@@ -3430,6 +4686,23 @@ function RB:CreateTradeSkillControls()
     button:SetScript("OnLeave", HideTooltip)
 
     self.tradeSkillButton = button
+
+    local shoppingButton = self:CreateButton(parent, 132, 22, "Add to AH List")
+    shoppingButton:SetFrameLevel((parent:GetFrameLevel() or 1) + 20)
+    shoppingButton:SetPoint("TOPLEFT", button, "BOTTOMLEFT", 0, -4)
+    shoppingButton:SetScript("OnClick", function()
+        RB:NormalizeTradeSkillQuantityBox(false)
+        RB:ImportSelectedRecipeToShoppingList()
+    end)
+    shoppingButton:SetScript("OnEnter", function(selfButton)
+        GameTooltip:SetOwner(selfButton, "ANCHOR_RIGHT")
+        GameTooltip:SetText("AH Shopping List", 1, 0.82, 0)
+        GameTooltip:AddLine(selfButton.tooltipText or "Add selected recipe reagents that still need to be bought.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    shoppingButton:SetScript("OnLeave", HideTooltip)
+
+    self.tradeSkillShoppingButton = shoppingButton
 
     local quantityLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     quantityLabel:SetPoint("LEFT", button, "RIGHT", 8, 0)
@@ -3574,8 +4847,9 @@ function RB:CreateTradeSkillControls()
     end
 
     local statsText = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    statsText:SetPoint("TOPLEFT", button, "BOTTOMLEFT", 0, -6)
+    statsText:SetPoint("TOPLEFT", shoppingButton, "BOTTOMLEFT", 0, -6)
     statsText:SetPoint("RIGHT", parent, "RIGHT", -28, 0)
+    statsText:SetHeight(34)
     statsText:SetJustifyH("LEFT")
     statsText:SetTextColor(0.82, 0.82, 0.82)
     statsText:SetText("")
@@ -3823,8 +5097,21 @@ function RB:CreateFrame()
     end)
     f.sortMode:SetScript("OnLeave", HideTooltip)
 
+    f.shoppingList = self:CreateButton(f, ROOT_SHOPPING_BUTTON_WIDTH, ROOT_BUTTON_HEIGHT, "AH List")
+    f.shoppingList:SetPoint("LEFT", f.sortMode, "RIGHT", ROOT_BUTTON_GAP, 0)
+    f.shoppingList:SetScript("OnClick", function()
+        RB:RenderShoppingList()
+    end)
+    f.shoppingList:SetScript("OnEnter", function(selfButton)
+        GameTooltip:SetOwner(selfButton, "ANCHOR_RIGHT")
+        GameTooltip:SetText("AH Shopping List", 1, 0.82, 0)
+        GameTooltip:AddLine(selfButton.tooltipText or "Open your saved reagent buy list.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    f.shoppingList:SetScript("OnLeave", HideTooltip)
+
     f.previewToggle = self:CreateButton(f, ROOT_PREVIEW_TOGGLE_BUTTON_WIDTH, ROOT_BUTTON_HEIGHT, "Preview: On")
-    f.previewToggle:SetPoint("LEFT", f.sortMode, "RIGHT", ROOT_BUTTON_GAP, 0)
+    f.previewToggle:SetPoint("LEFT", f.shoppingList, "RIGHT", ROOT_BUTTON_GAP, 0)
     f.previewToggle:SetScript("OnClick", function()
         RB:ToggleDepositPreviewEnabled()
     end)
@@ -3883,6 +5170,48 @@ function RB:CreateFrame()
     f.pageText:SetPoint("RIGHT", -18, 0)
     f.pageText:SetJustifyH("RIGHT")
     f.pageText:SetText("")
+
+    f.shoppingImportRecipe = self:CreateButton(f, SHOPPING_RECIPE_BUTTON_WIDTH, CATEGORY_BUTTON_HEIGHT, "From Recipe")
+    f.shoppingImportRecipe:SetPoint("LEFT", f.back, "RIGHT", CATEGORY_BUTTON_GAP, 0)
+    f.shoppingImportRecipe:SetScript("OnClick", function()
+        RB:ImportSelectedRecipeToShoppingList()
+    end)
+
+    f.shoppingPrint = self:CreateButton(f, SHOPPING_PRINT_BUTTON_WIDTH, CATEGORY_BUTTON_HEIGHT, "Print List")
+    f.shoppingPrint:SetPoint("LEFT", f.shoppingImportRecipe, "RIGHT", CATEGORY_BUTTON_GAP, 0)
+    f.shoppingPrint:SetScript("OnClick", function()
+        RB:PrintShoppingList()
+    end)
+
+    f.shoppingClear = self:CreateButton(f, SHOPPING_CLEAR_BUTTON_WIDTH, CATEGORY_BUTTON_HEIGHT, "Clear List")
+    f.shoppingClear:SetPoint("LEFT", f.shoppingPrint, "RIGHT", CATEGORY_BUTTON_GAP, 0)
+    f.shoppingClear:SetScript("OnClick", function()
+        RB:ClearShoppingList()
+    end)
+
+    f.shoppingPrev = self:CreateButton(f, CATEGORY_PAGE_BUTTON_WIDTH, CATEGORY_BUTTON_HEIGHT, "Prev")
+    f.shoppingPrev:SetPoint("LEFT", f.shoppingClear, "RIGHT", CATEGORY_BUTTON_GAP, 0)
+    f.shoppingPrev:SetScript("OnClick", function()
+        if RB.currentView == "shopping" and RB.currentPage and RB.currentPage > 0 then
+            RB.currentPage = RB.currentPage - 1
+            RB:RenderShoppingList(true)
+        end
+    end)
+
+    f.shoppingNext = self:CreateButton(f, CATEGORY_PAGE_BUTTON_WIDTH, CATEGORY_BUTTON_HEIGHT, "Next")
+    f.shoppingNext:SetPoint("LEFT", f.shoppingPrev, "RIGHT", CATEGORY_BUTTON_GAP, 0)
+    f.shoppingNext:SetScript("OnClick", function()
+        if RB.currentView == "shopping" and RB.currentPage and RB.totalPages and RB.currentPage + 1 < RB.totalPages then
+            RB.currentPage = RB.currentPage + 1
+            RB:RenderShoppingList(true)
+        end
+    end)
+
+    f.shoppingPageText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    f.shoppingPageText:SetPoint("LEFT", f.shoppingNext, "RIGHT", CATEGORY_PAGE_TEXT_GAP, 0)
+    f.shoppingPageText:SetPoint("RIGHT", -18, 0)
+    f.shoppingPageText:SetJustifyH("RIGHT")
+    f.shoppingPageText:SetText("")
 
     f.list = CreateFrame("Frame", nil, f)
     f.list:SetPoint("TOPLEFT", 18, -118)
@@ -3960,11 +5289,21 @@ function RB:CreateFrame()
                     RB:HideWithdrawPrompt()
                     RB:ShowDetail(selfRow.item)
                 end
+            elseif selfRow.kind == "shopping" and selfRow.item then
+                if mouseButton == "RightButton" then
+                    if IsShiftKeyDown and IsShiftKeyDown() then
+                        RB:RemoveShoppingListItem(selfRow.item.entry)
+                    else
+                        RB:ShowShoppingAmountPrompt(selfRow.item)
+                    end
+                else
+                    RB:SearchAuctionHouseForItem(selfRow.item.entry)
+                end
             end
         end)
 
         row:SetScript("OnEnter", function(selfRow)
-            if selfRow.kind == "item" and selfRow.item and selfRow.item.entry then
+            if (selfRow.kind == "item" or selfRow.kind == "shopping") and selfRow.item and selfRow.item.entry then
                 SetTooltipItem(selfRow.item.entry)
             end
         end)
@@ -4037,6 +5376,27 @@ function RB:CreateFrame()
     f.withdrawExact:SetPoint("LEFT", f.exactBox, "RIGHT", 10, 0)
     f.withdrawExact:SetScript("OnClick", function()
         RB:WithdrawItemExact()
+    end)
+
+    f.shoppingLabel = f.detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    f.shoppingLabel:SetPoint("TOPLEFT", 20, -194)
+    f.shoppingLabel:SetText("AH list amount:")
+    f.shoppingLabel:SetJustifyH("LEFT")
+
+    f.shoppingAmountBox = self:CreateEditBox(f.detail, 82, 24)
+    f.shoppingAmountBox:SetPoint("LEFT", f.shoppingLabel, "RIGHT", 10, 0)
+    f.shoppingAmountBox:SetScript("OnEnterPressed", function(selfBox)
+        selfBox:ClearFocus()
+        RB:AddDetailItemToShoppingList()
+    end)
+    f.shoppingAmountBox:SetScript("OnTextChanged", function()
+        RB:UpdateControls()
+    end)
+
+    f.addShopping = self:CreateButton(f.detail, 132, 28, "Add to AH List")
+    f.addShopping:SetPoint("LEFT", f.shoppingAmountBox, "RIGHT", 10, 0)
+    f.addShopping:SetScript("OnClick", function()
+        RB:AddDetailItemToShoppingList()
     end)
 
     f.detailBack = self:CreateButton(f.detail, 132, 28, "Back to List")
@@ -4132,6 +5492,83 @@ function RB:CreateFrame()
     f.quickWithdrawHint:SetPoint("RIGHT", -18, 0)
     f.quickWithdrawHint:SetJustifyH("LEFT")
     f.quickWithdrawHint:SetText("")
+
+    f.shoppingPrompt = CreateFrame("Frame", nil, f)
+    f.shoppingPrompt:SetWidth(QUICK_WITHDRAW_WIDTH)
+    f.shoppingPrompt:SetHeight(154)
+    f.shoppingPrompt:SetPoint("CENTER", f, "CENTER", 0, 18)
+    f.shoppingPrompt:SetFrameLevel((f:GetFrameLevel() or 1) + 82)
+    f.shoppingPrompt:EnableMouse(true)
+    self:MakeBackdrop(f.shoppingPrompt, 0.98, true)
+    f.shoppingPrompt:Hide()
+
+    f.shoppingPromptTitle = f.shoppingPrompt:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    f.shoppingPromptTitle:SetPoint("TOPLEFT", 16, -13)
+    f.shoppingPromptTitle:SetText("AH List Amount")
+    f.shoppingPromptTitle:SetTextColor(1.00, 0.82, 0.28)
+
+    f.shoppingPromptClose = self:CreateCloseButton(f.shoppingPrompt)
+    f.shoppingPromptClose:SetPoint("TOPRIGHT", -8, -8)
+    f.shoppingPromptClose:SetScript("OnClick", function()
+        RB:HideShoppingAmountPrompt()
+    end)
+
+    f.shoppingPromptIcon = f.shoppingPrompt:CreateTexture(nil, "ARTWORK")
+    f.shoppingPromptIcon:SetWidth(38)
+    f.shoppingPromptIcon:SetHeight(38)
+    f.shoppingPromptIcon:SetPoint("TOPLEFT", 18, -44)
+
+    f.shoppingPromptName = f.shoppingPrompt:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    f.shoppingPromptName:SetPoint("TOPLEFT", f.shoppingPromptIcon, "TOPRIGHT", 10, -1)
+    f.shoppingPromptName:SetPoint("RIGHT", -18, 0)
+    f.shoppingPromptName:SetJustifyH("LEFT")
+
+    f.shoppingPromptCurrent = f.shoppingPrompt:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    f.shoppingPromptCurrent:SetPoint("TOPLEFT", f.shoppingPromptName, "BOTTOMLEFT", 0, -5)
+    f.shoppingPromptCurrent:SetJustifyH("LEFT")
+
+    f.shoppingPromptLabel = f.shoppingPrompt:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    f.shoppingPromptLabel:SetPoint("TOPLEFT", 18, -94)
+    f.shoppingPromptLabel:SetText("Amount:")
+    f.shoppingPromptLabel:SetJustifyH("LEFT")
+
+    f.shoppingPromptBox = self:CreateEditBox(f.shoppingPrompt, 82, 24)
+    f.shoppingPromptBox:SetPoint("LEFT", f.shoppingPromptLabel, "RIGHT", 10, 0)
+    f.shoppingPromptBox:SetScript("OnEnterPressed", function(selfBox)
+        selfBox:ClearFocus()
+        RB:ApplyShoppingAmountPrompt()
+    end)
+    f.shoppingPromptBox:SetScript("OnEscapePressed", function(selfBox)
+        selfBox:ClearFocus()
+        RB:HideShoppingAmountPrompt()
+    end)
+    f.shoppingPromptBox:SetScript("OnTextChanged", function()
+        RB:UpdateShoppingAmountPromptControls()
+    end)
+
+    f.shoppingPromptUpdate = self:CreateButton(f.shoppingPrompt, 112, 26, "Update")
+    f.shoppingPromptUpdate:SetPoint("LEFT", f.shoppingPromptBox, "RIGHT", 10, 0)
+    f.shoppingPromptUpdate:SetScript("OnClick", function()
+        RB:ApplyShoppingAmountPrompt()
+    end)
+
+    f.shoppingPromptRemove = self:CreateButton(f.shoppingPrompt, 82, 26, "Remove")
+    f.shoppingPromptRemove:SetPoint("LEFT", f.shoppingPromptUpdate, "RIGHT", 8, 0)
+    f.shoppingPromptRemove:SetScript("OnClick", function()
+        RB:RemoveShoppingPromptItem()
+    end)
+
+    f.shoppingPromptCancel = self:CreateButton(f.shoppingPrompt, 82, 26, "Cancel")
+    f.shoppingPromptCancel:SetPoint("LEFT", f.shoppingPromptRemove, "RIGHT", 8, 0)
+    f.shoppingPromptCancel:SetScript("OnClick", function()
+        RB:HideShoppingAmountPrompt()
+    end)
+
+    f.shoppingPromptHint = f.shoppingPrompt:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    f.shoppingPromptHint:SetPoint("TOPLEFT", 18, -126)
+    f.shoppingPromptHint:SetPoint("RIGHT", -18, 0)
+    f.shoppingPromptHint:SetJustifyH("LEFT")
+    f.shoppingPromptHint:SetText("")
 
     f.depositPreview = CreateFrame("Frame", nil, f)
     f.depositPreview:SetWidth(520)
@@ -4261,12 +5698,14 @@ function RB:SetCommonVisibility(view)
     local rootView = view == "root"
     local categoryView = view == "category"
     local detailView = view == "detail"
+    local shoppingView = view == "shopping"
 
     f.rootDeposit:Show()
     f.rootWithdraw:Show()
     f.refresh:Show()
+    f.shoppingList:Show()
 
-    if categoryView or detailView then
+    if categoryView or detailView or shoppingView then
         f.back:Show()
     else
         f.back:Hide()
@@ -4286,7 +5725,23 @@ function RB:SetCommonVisibility(view)
         f.pageText:Hide()
     end
 
-    if rootView or categoryView then
+    if shoppingView then
+        f.shoppingImportRecipe:Show()
+        f.shoppingPrint:Show()
+        f.shoppingClear:Show()
+        f.shoppingPrev:Show()
+        f.shoppingNext:Show()
+        f.shoppingPageText:Show()
+    else
+        f.shoppingImportRecipe:Hide()
+        f.shoppingPrint:Hide()
+        f.shoppingClear:Hide()
+        f.shoppingPrev:Hide()
+        f.shoppingNext:Hide()
+        f.shoppingPageText:Hide()
+    end
+
+    if rootView or categoryView or shoppingView then
         f.list:Show()
     else
         f.list:Hide()
@@ -4310,6 +5765,7 @@ function RB:UpdateControls()
     local totalPages = math.max(tonumber(self.totalPages) or 1, 1)
     local inCategory = self.currentView == "category"
     local inDetail = self.currentView == "detail"
+    local inShopping = self.currentView == "shopping"
     local hasCategory = self.currentCategoryId ~= nil
 
     if self.busyKind == "request" then
@@ -4321,13 +5777,25 @@ function RB:UpdateControls()
     self:SetButtonEnabled(f.refresh, not busy)
     self:SetButtonEnabled(f.rootDeposit, not busy)
     self:SetButtonEnabled(f.rootWithdraw, not busy)
-    self:SetButtonEnabled(f.sortMode, not busy)
+    self:SetButtonEnabled(f.sortMode, not busy and not inShopping)
     self:SetButtonEnabled(f.previewToggle, not busy)
+    self:SetButtonEnabled(f.shoppingList, not busy)
     self:SetButtonEnabled(f.back, not busy)
     self:SetButtonEnabled(f.catDeposit, not busy and inCategory and hasCategory)
     self:SetButtonEnabled(f.catWithdraw, not busy and inCategory and hasCategory)
     self:SetButtonEnabled(f.prev, not busy and inCategory and page > 0)
     self:SetButtonEnabled(f.next, not busy and inCategory and page + 1 < totalPages)
+
+    local shoppingTypes = 0
+    if inShopping then
+        shoppingTypes = self:GetShoppingListTotals()
+    end
+
+    self:SetButtonEnabled(f.shoppingImportRecipe, not busy)
+    self:SetButtonEnabled(f.shoppingPrint, not busy and shoppingTypes > 0)
+    self:SetButtonEnabled(f.shoppingClear, not busy and shoppingTypes > 0)
+    self:SetButtonEnabled(f.shoppingPrev, not busy and inShopping and page > 0)
+    self:SetButtonEnabled(f.shoppingNext, not busy and inShopping and page + 1 < totalPages)
 
     local stored = 0
     if self.detailItem then
@@ -4335,11 +5803,13 @@ function RB:UpdateControls()
     end
 
     local exactAmount = self:GetExactWithdrawAmount()
+    local shoppingAmount = self:GetDetailShoppingAmount()
 
     self:SetButtonEnabled(f.withdrawOne, not busy and inDetail and stored >= 1)
     self:SetButtonEnabled(f.withdrawStack, not busy and inDetail and stored >= 1)
     self:SetButtonEnabled(f.withdrawItemAll, not busy and inDetail and stored >= 1)
     self:SetButtonEnabled(f.withdrawExact, not busy and inDetail and stored >= 1 and exactAmount >= 1)
+    self:SetButtonEnabled(f.addShopping, not busy and inDetail and shoppingAmount >= 1)
     self:SetButtonEnabled(f.detailBack, not busy)
 
     if f.depositPreview then
@@ -4350,6 +5820,7 @@ function RB:UpdateControls()
     self:UpdateSortButton()
     self:UpdatePreviewToggleButton()
     self:UpdateQuickWithdrawControls()
+    self:UpdateShoppingAmountPromptControls()
     self:UpdateUndoButton()
 end
 
@@ -4428,6 +5899,7 @@ end
 
 function RB:RenderRoot(preserveStatus)
     self:HideWithdrawPrompt()
+    self:HideShoppingAmountPrompt()
     self:CreateFrame()
 
     self.currentView = "root"
@@ -4528,6 +6000,7 @@ function RB:RenderRoot(preserveStatus)
 end
 
 function RB:RenderCategory(preserveStatus)
+    self:HideShoppingAmountPrompt()
     self:CreateFrame()
 
     self.currentView = "category"
@@ -4604,8 +6077,112 @@ function RB:RenderCategory(preserveStatus)
     end
 end
 
+function RB:RenderShoppingList(preserveStatus)
+    self:HideWithdrawPrompt()
+    self:HideDepositPreview()
+    self:CreateFrame()
+    self:NormalizeShoppingList()
+
+    local wasShoppingView = self.currentView == "shopping"
+    self.currentView = "shopping"
+    self.currentCategoryId = nil
+    self.detailItem = nil
+
+    local f = self.frame
+    local items = self:GetShoppingListItems()
+    local total = 0
+    local maxAmount = 0
+
+    for _, item in ipairs(items) do
+        local amount = tonumber(item.amount) or 0
+        total = total + amount
+        if amount > maxAmount then
+            maxAmount = amount
+        end
+    end
+
+    local totalPages = math.max(math.ceil(#items / ROW_COUNT), 1)
+    local page = wasShoppingView and (tonumber(self.currentPage) or 0) or 0
+    if page < 0 then
+        page = 0
+    elseif page >= totalPages then
+        page = totalPages - 1
+    end
+
+    self.currentPage = page
+    self.totalPages = totalPages
+
+    f:Show()
+    f.title:SetText("AH Shopping List")
+    f.modeText:SetText(FormatCount(total) .. " reagent(s) across " .. tostring(#items) .. " item type(s)")
+    f.pageText:SetText("")
+    f.shoppingPageText:SetText("Page " .. tostring(page + 1) .. "/" .. tostring(totalPages))
+    f.headerName:ClearAllPoints()
+    f.headerName:SetPoint("LEFT", 32, 0)
+    f.headerName:SetText("Item")
+    f.headerCount:SetText("Needed / Bags")
+
+    self:SetCommonVisibility("shopping")
+    self:ClearRows()
+
+    local missingItemInfo = false
+    local startIndex = (page * ROW_COUNT) + 1
+
+    for rowIndex = 1, ROW_COUNT do
+        local item = items[startIndex + rowIndex - 1]
+        local row = f.rows[rowIndex]
+        if row then
+            if not item then
+                break
+            end
+
+            local icon, name, link, stackCount, missingInfo = GetItemDisplay(item.entry)
+
+            if missingInfo then
+                missingItemInfo = true
+            end
+
+            local bagCount = 0
+            if GetItemCount then
+                bagCount = tonumber(GetItemCount(item.entry, false)) or 0
+            end
+
+            row.kind = "shopping"
+            row.categoryId = nil
+            row.item = item
+            row.icon:Show()
+            row.icon:SetTexture(icon)
+            row.text:ClearAllPoints()
+            row.text:SetPoint("LEFT", row.icon, "RIGHT", 9, 0)
+            row.text:SetPoint("RIGHT", -170, 0)
+            row.text:SetText(link or name)
+            row.count:SetText("x" .. FormatCount(item.amount) .. " / x" .. FormatCount(bagCount))
+            self:SetRowFill(row, item.amount, maxAmount)
+            row:Show()
+        end
+    end
+
+    if #items == 0 then
+        self:SetEmptyRow("AH shopping list is empty.")
+        missingItemInfo = false
+    end
+
+    if missingItemInfo then
+        self:QueueItemInfoRefresh()
+    else
+        self:ClearItemInfoRefresh()
+    end
+
+    self:UpdateControls()
+
+    if not preserveStatus and not self.busyKind then
+        self:Status("Left-click searches the Auction House. Right-click edits amount. Shift-right-click removes.", 0.82, 0.82, 0.82)
+    end
+end
+
 function RB:ShowDetail(item, preserveStatus)
     self:HideWithdrawPrompt()
+    self:HideShoppingAmountPrompt()
     if not item or not item.entry then
         return
     end
@@ -4633,6 +6210,11 @@ function RB:ShowDetail(item, preserveStatus)
         f.exactBox:ClearFocus()
     end
 
+    if f.shoppingAmountBox then
+        f.shoppingAmountBox:SetText("")
+        f.shoppingAmountBox:ClearFocus()
+    end
+
     if missingInfo then
         self:QueueItemInfoRefresh()
     else
@@ -4648,6 +6230,7 @@ end
 
 function RB:Close()
     self:HideWithdrawPrompt()
+    self:HideShoppingAmountPrompt()
     self:HideDepositPreview()
     self.awaitingView = nil
     self.busyKind = nil
@@ -4818,6 +6401,7 @@ function RB:HandleProtocol(message)
                         self.pendingTradeSkillCheckUntil = nil
                     end
 
+                    self:CompletePendingShoppingListImport(pending.key)
                     self:UpdateTradeSkillControls()
                 end
             end
@@ -5036,6 +6620,42 @@ SlashCmdList["REAGENTBANKUI"] = function(msg)
         return
     end
 
+    if command == "plan" then
+        local count = tonumber(value)
+        if count then
+            RB:SetTradeSkillPrepareCount(count, true)
+        end
+
+        RB:PrintTradeSkillShoppingList()
+        RB:UpdateTradeSkillControls()
+        return
+    end
+
+    if command == "shopping" or command == "shoppinglist" or command == "ahlist" or command == "buy" then
+        RB:HandleShoppingListSlash(value)
+        return
+    end
+
+    if command == "craft" or command == "prepare" or command == "withdrawcraft" then
+        local count = tonumber(value)
+        if count then
+            RB:SetTradeSkillPrepareCount(count, true)
+        end
+
+        RB:WithdrawNeededForSelectedRecipe()
+        return
+    end
+
+    if command == "lowstock" or command == "restock" then
+        local count = tonumber(value)
+        if count then
+            RB:SetLowStockCraftCount(count)
+        else
+            PrintAddon("low-stock alerts currently check enough reagents for " .. tostring(RB:GetLowStockCraftCount()) .. " craft(s).")
+        end
+        return
+    end
+
     if command == "sort" then
         ReagentBankUIDB = ReagentBankUIDB or {}
         local lowerValue = string.lower(value or "")
@@ -5161,6 +6781,11 @@ SlashCmdList["REAGENTBANKUI"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank hide")
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank sort id|name|amount|amount_asc")
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank preview on|off")
+    DEFAULT_CHAT_FRAME:AddMessage("  /rbank plan 5")
+    DEFAULT_CHAT_FRAME:AddMessage("  /rbank ahlist")
+    DEFAULT_CHAT_FRAME:AddMessage("  /rbank ahlist recipe|add itemId amount|print|clear")
+    DEFAULT_CHAT_FRAME:AddMessage("  /rbank craft 5")
+    DEFAULT_CHAT_FRAME:AddMessage("  /rbank lowstock 5")
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank undo")
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank scale 0.75 - 1.20")
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank ticker 0|30-3600")
@@ -5180,12 +6805,14 @@ RB:SetScript("OnEvent", function(self, event, ...)
             self:RestartAutoDepositTicker()
             ReagentBankUIDB.sortMode = NormalizeItemSortMode(ReagentBankUIDB.sortMode)
             ReagentBankUIDB.categorySortMode = NormalizeCategorySortMode(ReagentBankUIDB.categorySortMode)
+            self:NormalizeShoppingList()
             self:ApplySavedColorTheme()
             if ReagentBankUIDB.tradeSkillPrepareCount == nil then
                 ReagentBankUIDB.tradeSkillPrepareCount = 1
             else
                 ReagentBankUIDB.tradeSkillPrepareCount = self:ClampTradeSkillPrepareCount(ReagentBankUIDB.tradeSkillPrepareCount)
             end
+            ReagentBankUIDB.lowStockCrafts = self:ClampTradeSkillPrepareCount(ReagentBankUIDB.lowStockCrafts or LOW_STOCK_DEFAULT_CRAFTS)
             self:ApplySavedPosition()
             self:ApplyScale()
             self:CreatePaperDollButton()
@@ -5194,6 +6821,7 @@ RB:SetScript("OnEvent", function(self, event, ...)
             self:CreateTradeSkillControls()
         end
     elseif event == "PLAYER_LOGIN" then
+        self:NormalizeShoppingList()
         self:ApplySavedColorTheme()
         self:RestartAutoDepositTicker()
         self:CreatePaperDollButton()
@@ -5207,6 +6835,12 @@ RB:SetScript("OnEvent", function(self, event, ...)
         self:UpdateTradeSkillControls()
     elseif event == "TRADE_SKILL_CLOSE" then
         self:HandleTradeSkillClosed()
+    elseif event == "AUCTION_HOUSE_SHOW" then
+        self.auctionShoppingFrameDismissed = false
+        self:ShowAuctionShoppingFrame()
+    elseif event == "AUCTION_HOUSE_CLOSED" then
+        self.auctionShoppingFrameDismissed = false
+        self:HideAuctionShoppingFrame(false)
     elseif event == "CHAT_MSG_SYSTEM" then
         local message = ...
         self:HandleProtocol(message)
@@ -5218,3 +6852,5 @@ RB:RegisterEvent("PLAYER_LOGIN")
 RB:RegisterEvent("TRADE_SKILL_SHOW")
 RB:RegisterEvent("TRADE_SKILL_UPDATE")
 RB:RegisterEvent("TRADE_SKILL_CLOSE")
+RB:RegisterEvent("AUCTION_HOUSE_SHOW")
+RB:RegisterEvent("AUCTION_HOUSE_CLOSED")

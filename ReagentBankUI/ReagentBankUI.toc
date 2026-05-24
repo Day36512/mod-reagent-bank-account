@@ -1,8 +1,8 @@
 ## Interface: 30300
 ## Title: Reagent Bank UI
 ## Notes: Standalone UI for the AzerothCore Reagent Bank Account module. No banker NPC required.
-## Author: Custom AzerothCore Module
-## Version: 2.0.1-xml-templates
+## Author: Dinkledork
+## Version: 2.1.2-shopping-list
 ## SavedVariables: ReagentBankUIDB
 
 ReagentBankUI.xml
