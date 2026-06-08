@@ -8,6 +8,10 @@ end
 local RB = CreateFrame("Frame", "ReagentBankUIController")
 _G.ReagentBankUI = RB
 
+_G.BINDING_HEADER_REAGENTBANKUI = "Reagent Bank UI"
+_G.BINDING_NAME_REAGENTBANKUI_AUTO_DEPOSIT_APPLY = "Periodic auto-deposit: Apply"
+_G.BINDING_NAME_REAGENTBANKUI_AUTO_DEPOSIT_OFF = "Periodic auto-deposit: Off"
+
 local COMMAND_PREFIX = ".rbank"
 
 local CATEGORY_ORDER = {
@@ -40,6 +44,15 @@ local BACKDROP = {
     tileSize = 16,
     edgeSize = 14,
     insets = { left = 4, right = 4, top = 4, bottom = 4 },
+}
+
+local INSET_BACKDROP = {
+    bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+    tile = true,
+    tileSize = 16,
+    edgeSize = 12,
+    insets = { left = 3, right = 3, top = 3, bottom = 3 },
 }
 
 local PANEL_BACKDROP = {
@@ -89,20 +102,28 @@ local SKIN = {
     paperIcon = { 1.00, 1.00, 1.00, 1.00 },
 }
 
-local DEFAULT_COLOR_THEME = "gold"
+local DEFAULT_COLOR_THEME = "classic_gold"
+local DEFAULT_FRAME_STYLE = "classic"
+
+local FRAME_STYLE_ORDER = { "classic", "elvui" }
+local FRAME_STYLES = {
+    classic = { label = "Classic" },
+    elvui = { label = "ElvUI" },
+}
 
 local SKIN_THEME_ORDER = {
-    "gold",
-    "arcane",
-    "emerald",
-    "ruby",
-    "violet",
-    "slate",
+    "classic_gold",
+    "alliance_blue",
+    "horde_red",
+    "fel_green",
+    "ebon_slate",
+    "purple",
+    "ice",
 }
 
 local SKIN_THEMES = {
     gold = {
-        label = "Classic Gold",
+        label = "Gold",
         windowBg = { 0.025, 0.028, 0.040, 0.98 },
         windowBorder = { 0.72, 0.52, 0.24, 0.95 },
         panelBg = { 0.045, 0.050, 0.070, 0.86 },
@@ -285,14 +306,125 @@ local function CopyColor(color)
     return { color[1], color[2], color[3], color[4] }
 end
 
+local function CopyTheme(sourceKey, label, overrides)
+    local source = SKIN_THEMES[sourceKey] or SKIN_THEMES.gold
+    local theme = {}
+
+    for key, value in pairs(source) do
+        theme[key] = CopyColor(value)
+    end
+
+    theme.label = label or theme.label
+
+    for key, value in pairs(overrides or {}) do
+        theme[key] = CopyColor(value)
+    end
+
+    return theme
+end
+
+SKIN_THEMES.classic_gold = CopyTheme("gold", "Gold")
+SKIN_THEMES.alliance_blue = CopyTheme("arcane", "Blue")
+SKIN_THEMES.horde_red = CopyTheme("ruby", "Red")
+SKIN_THEMES.fel_green = CopyTheme("emerald", "Green")
+SKIN_THEMES.ebon_slate = CopyTheme("slate", "Slate")
+SKIN_THEMES.purple = CopyTheme("violet", "Purple")
+SKIN_THEMES.ice = CopyTheme("arcane", "Ice", {
+    windowBg = { 0.015, 0.034, 0.042, 0.98 },
+    windowBorder = { 0.50, 0.88, 1.00, 0.95 },
+    panelBg = { 0.025, 0.052, 0.064, 0.86 },
+    panelBorder = { 0.18, 0.42, 0.52, 1.00 },
+    headerLine = { 0.60, 0.94, 1.00, 0.82 },
+    titleText = { 0.72, 0.94, 1.00 },
+    buttonText = { 0.82, 0.96, 1.00 },
+    paperIcon = { 0.72, 0.94, 1.00, 1.00 },
+})
+SKIN_THEMES.elvui_dark = CopyTheme("slate", "ElvUI Dark", {
+    windowBg = { 0.018, 0.020, 0.024, 0.98 },
+    windowBorder = { 0.08, 0.10, 0.12, 0.95 },
+    panelBg = { 0.026, 0.030, 0.034, 0.88 },
+    panelBorder = { 0.10, 0.12, 0.14, 1.00 },
+    headerLine = { 0.35, 0.62, 0.92, 0.78 },
+})
+SKIN_THEMES.elvui_blue = CopyTheme("arcane", "Blue")
+SKIN_THEMES.elvui_purple = CopyTheme("violet", "Purple")
+SKIN_THEMES.elvui_green = CopyTheme("emerald", "Green")
+SKIN_THEMES.elvui_red = CopyTheme("ruby", "Red")
+SKIN_THEMES.elvui_ice = CopyTheme("arcane", "Ice", {
+    windowBg = { 0.015, 0.034, 0.042, 0.98 },
+    windowBorder = { 0.50, 0.88, 1.00, 0.95 },
+    panelBg = { 0.025, 0.052, 0.064, 0.86 },
+    panelBorder = { 0.18, 0.42, 0.52, 1.00 },
+    headerLine = { 0.60, 0.94, 1.00, 0.82 },
+    titleText = { 0.72, 0.94, 1.00 },
+    buttonText = { 0.82, 0.96, 1.00 },
+    paperIcon = { 0.72, 0.94, 1.00, 1.00 },
+})
+
+local SKIN_THEME_ALIASES = {
+    gold = "classic_gold",
+    classicgold = "classic_gold",
+    arcane = "alliance_blue",
+    emerald = "fel_green",
+    ruby = "horde_red",
+    violet = "purple",
+    slate = "ebon_slate",
+    alliance = "alliance_blue",
+    allianceblue = "alliance_blue",
+    horde = "horde_red",
+    hordered = "horde_red",
+    fel = "fel_green",
+    felgreen = "fel_green",
+    ebonslate = "ebon_slate",
+    slate = "ebon_slate",
+    blue = "alliance_blue",
+    red = "horde_red",
+    green = "fel_green",
+    purple = "purple",
+    ice = "ice",
+    elvuidark = "ebon_slate",
+    elvui_dark = "ebon_slate",
+    elvuiblue = "alliance_blue",
+    elvui_blue = "alliance_blue",
+    elvuipurple = "purple",
+    elvui_purple = "purple",
+    elvuigreen = "fel_green",
+    elvui_green = "fel_green",
+    elvuired = "horde_red",
+    elvui_red = "horde_red",
+    elvuiice = "ice",
+    elvui_ice = "ice",
+}
+
 local function NormalizeColorThemeKey(themeKey)
     themeKey = string.lower(tostring(themeKey or DEFAULT_COLOR_THEME))
+    themeKey = SKIN_THEME_ALIASES[themeKey] or themeKey
 
     if SKIN_THEMES[themeKey] then
         return themeKey
     end
 
     return DEFAULT_COLOR_THEME
+end
+
+local function NormalizeFrameStyleKey(styleKey)
+    styleKey = string.lower(tostring(styleKey or DEFAULT_FRAME_STYLE))
+    if styleKey == "modern" or styleKey == "flat" then
+        styleKey = "elvui"
+    end
+    if FRAME_STYLES[styleKey] then
+        return styleKey
+    end
+    return DEFAULT_FRAME_STYLE
+end
+
+local function IsElvUIFrameStyle()
+    ReagentBankUIDB = ReagentBankUIDB or {}
+    return NormalizeFrameStyleKey(ReagentBankUIDB.frameStyle) == "elvui"
+end
+
+local function GetButtonBackdrop()
+    return IsElvUIFrameStyle() and BUTTON_BACKDROP or INSET_BACKDROP
 end
 
 local function ApplyColorThemeToSkin(themeKey)
@@ -308,7 +440,7 @@ local function ApplyColorThemeToSkin(themeKey)
     return themeKey
 end
 
-local DEFAULT_SCALE = 0.92
+local DEFAULT_SCALE = 1.00
 local MAIN_FRAME_WIDTH = 740
 local MAIN_FRAME_HEIGHT = 600
 local QUICK_WITHDRAW_WIDTH = 470
@@ -321,7 +453,7 @@ local ITEM_CACHE_REFRESH_INTERVAL = 0.35
 local ITEM_CACHE_REFRESH_TIMEOUT = 8.0
 local AUTO_DEPOSIT_AFTER_CLOSE_DELAY = 0.80
 local AUTO_DEPOSIT_PREP_EXPIRE_SECONDS = 300
-local AUTO_DEPOSIT_TICKER_DEFAULT_SECONDS = 0
+local AUTO_DEPOSIT_TICKER_DEFAULT_SECONDS = 30
 local AUTO_DEPOSIT_TICKER_MIN_SECONDS = 30
 local AUTO_DEPOSIT_TICKER_MAX_SECONDS = 3600
 local AUTO_DEPOSIT_TICKER_RETRY_DELAY = 10
@@ -898,10 +1030,16 @@ function RB:GetColorThemeKey()
     return ReagentBankUIDB.colorTheme
 end
 
+function RB:GetFrameStyleKey()
+    ReagentBankUIDB = ReagentBankUIDB or {}
+    ReagentBankUIDB.frameStyle = NormalizeFrameStyleKey(ReagentBankUIDB.frameStyle)
+    return ReagentBankUIDB.frameStyle
+end
+
 function RB:GetColorThemeLabel(themeKey)
     themeKey = NormalizeColorThemeKey(themeKey)
     local theme = SKIN_THEMES[themeKey]
-    return theme and theme.label or "Classic Gold"
+    return theme and theme.label or "Gold"
 end
 
 function RB:ApplySavedColorTheme()
@@ -920,8 +1058,22 @@ function RB:SetColorTheme(themeKey, silent)
 
     if not silent then
         local label = self:GetColorThemeLabel(themeKey)
-        PrintAddon("color schema set to " .. label .. ".")
-        self:Status("Color schema set to " .. label .. ".", 0.82, 0.82, 0.82)
+        PrintAddon("color scheme set to " .. label .. ".")
+        self:Status("Color scheme set to " .. label .. ".", 0.82, 0.82, 0.82)
+    end
+end
+
+function RB:SetFrameStyle(styleKey, silent)
+    ReagentBankUIDB = ReagentBankUIDB or {}
+    styleKey = NormalizeFrameStyleKey(styleKey)
+    ReagentBankUIDB.frameStyle = styleKey
+
+    self:ApplySkin()
+    self:UpdateColorSettingsFrame()
+
+    if not silent then
+        local style = FRAME_STYLES[styleKey]
+        PrintAddon("frame style set to " .. ((style and style.label) or styleKey) .. ".")
     end
 end
 
@@ -944,6 +1096,7 @@ function RB:StyleButton(button)
         return
     end
 
+    button:SetBackdrop(GetButtonBackdrop())
     SetFrameBackdropColors(button, SKIN.buttonBg, SKIN.buttonBorder)
 
     if button.shine then
@@ -964,6 +1117,7 @@ function RB:StyleCloseButton(button)
         return
     end
 
+    button:SetBackdrop(GetButtonBackdrop())
     SetFrameBackdropColors(button, SKIN.closeBg, SKIN.closeBorder)
 
     if button.hover then
@@ -980,6 +1134,7 @@ function RB:StyleEditBox(box)
         return
     end
 
+    box:SetBackdrop(GetButtonBackdrop())
     SetFrameBackdropColors(box, SKIN.inputBg, SKIN.buttonBorder)
     if box.SetTextColor then
         box:SetTextColor(SKIN.inputText[1], SKIN.inputText[2], SKIN.inputText[3], SKIN.inputText[4] or 1)
@@ -1016,6 +1171,9 @@ function RB:ApplySkin()
     if f then
         self:MakeBackdrop(f, 0.98)
 
+        if f.header then
+            f.header:SetBackdrop(IsElvUIFrameStyle() and PANEL_BACKDROP or BACKDROP)
+        end
         SetFrameBackdropColors(f.header, SKIN.headerBg, SKIN.windowBorder)
         SetTextureColor(f.headerGlow, SKIN.headerLine, 0.10)
         SetTextureColor(f.headerLine, SKIN.headerLine)
@@ -1031,7 +1189,7 @@ function RB:ApplySkin()
             f.addShopping, f.shoppingImportRecipe, f.shoppingPrint, f.shoppingClear,
             f.shoppingPrev, f.shoppingNext,
             f.shoppingPromptUpdate, f.shoppingPromptRemove, f.shoppingPromptCancel,
-            f.undoLast, f.quickWithdrawButton, f.quickWithdrawAll, f.quickWithdrawCancel,
+            f.undoLast, f.quickWithdrawButton, f.quickWithdrawAll, f.quickWithdrawShopping, f.quickWithdrawCancel,
         }
 
         if f.depositPreview then
@@ -1067,6 +1225,9 @@ function RB:ApplySkin()
             self:MakeBackdrop(f.depositPreview, 0.98, true)
         end
 
+        if f.detailIconBorder then
+            f.detailIconBorder:SetBackdrop(GetButtonBackdrop())
+        end
         SetFrameBackdropColors(f.detailIconBorder, { 0.02, 0.02, 0.03, 0.90 }, SKIN.buttonBorder)
 
         if f.listHeader then
@@ -1126,6 +1287,7 @@ function RB:ApplySkin()
         self:StyleCloseButton(auctionFrame.close)
         self:StyleButton(auctionFrame.prev)
         self:StyleButton(auctionFrame.next)
+        self:StyleButton(auctionFrame.clear)
         SetFontColor(auctionFrame.title, SKIN.titleText)
         SetFontColor(auctionFrame.summary, SKIN.mutedText)
         SetFontColor(auctionFrame.headerName, SKIN.buttonText)
@@ -1180,6 +1342,11 @@ function RB:ApplySkin()
         SetFontColor(settings.title, SKIN.titleText)
         SetFontColor(settings.note, SKIN.mutedText)
         self:StyleCloseButton(settings.close)
+        if settings.styleButtons then
+            for _, button in ipairs(settings.styleButtons) do
+                self:StyleButton(button)
+            end
+        end
         if settings.themeButtons then
             for _, button in ipairs(settings.themeButtons) do
                 self:StyleButton(button)
@@ -1187,10 +1354,16 @@ function RB:ApplySkin()
         end
         self:StyleButton(settings.cycle)
         self:StyleButton(settings.reset)
+        self:StyleButton(settings.resetWindow)
+        self:StyleButton(settings.scaleMinus)
+        self:StyleButton(settings.scalePlus)
         self:StyleButton(settings.autoDepositApply)
         self:StyleButton(settings.autoDepositOff)
         self:StyleEditBox(settings.autoDepositIntervalBox)
+        SetFontColor(settings.styleHeader, SKIN.titleText)
         SetFontColor(settings.themeHeader, SKIN.titleText)
+        SetFontColor(settings.scaleHeader, SKIN.titleText)
+        SetFontColor(settings.scaleValue, SKIN.mutedText)
         SetFontColor(settings.autoDepositHeader, SKIN.titleText)
         SetFontColor(settings.autoDepositNote, SKIN.mutedText)
         SetFontColor(settings.autoDepositLabel, SKIN.mutedText)
@@ -1199,8 +1372,21 @@ function RB:ApplySkin()
 end
 
 function RB:MakeBackdrop(frame, alpha, panel)
-    if panel then
+    if IsElvUIFrameStyle() then
         frame:SetBackdrop(PANEL_BACKDROP)
+        if panel then
+            frame:SetBackdropColor(SKIN.panelBg[1], SKIN.panelBg[2], SKIN.panelBg[3], alpha or SKIN.panelBg[4])
+            frame:SetBackdropBorderColor(SKIN.panelBorder[1], SKIN.panelBorder[2], SKIN.panelBorder[3], SKIN.panelBorder[4])
+            return
+        end
+
+        frame:SetBackdropColor(SKIN.windowBg[1], SKIN.windowBg[2], SKIN.windowBg[3], alpha or SKIN.windowBg[4])
+        frame:SetBackdropBorderColor(SKIN.windowBorder[1], SKIN.windowBorder[2], SKIN.windowBorder[3], SKIN.windowBorder[4])
+        return
+    end
+
+    if panel then
+        frame:SetBackdrop(BACKDROP)
         frame:SetBackdropColor(SKIN.panelBg[1], SKIN.panelBg[2], SKIN.panelBg[3], alpha or SKIN.panelBg[4])
         frame:SetBackdropBorderColor(SKIN.panelBorder[1], SKIN.panelBorder[2], SKIN.panelBorder[3], SKIN.panelBorder[4])
         return
@@ -1581,6 +1767,36 @@ function RB:ApplyAutoDepositTickerBox(silent)
     self:SetAutoDepositTickerSeconds(seconds, silent)
 end
 
+function RB:ApplyAutoDepositTickerBinding()
+    if self.colorSettingsFrame and self.colorSettingsFrame:IsShown() and self.colorSettingsFrame.autoDepositIntervalBox then
+        self:ApplyAutoDepositTickerBox()
+        return
+    end
+
+    local seconds = self:GetAutoDepositTickerSeconds()
+    if seconds <= 0 then
+        seconds = AUTO_DEPOSIT_TICKER_DEFAULT_SECONDS
+    end
+
+    self:SetAutoDepositTickerSeconds(seconds)
+end
+
+function RB:TurnOffAutoDepositTickerBinding()
+    self:SetAutoDepositTickerSeconds(0)
+end
+
+function ReagentBankUI_PeriodicAutoDepositApply()
+    if _G.ReagentBankUI and _G.ReagentBankUI.ApplyAutoDepositTickerBinding then
+        _G.ReagentBankUI:ApplyAutoDepositTickerBinding()
+    end
+end
+
+function ReagentBankUI_PeriodicAutoDepositOff()
+    if _G.ReagentBankUI and _G.ReagentBankUI.TurnOffAutoDepositTickerBinding then
+        _G.ReagentBankUI:TurnOffAutoDepositTickerBinding()
+    end
+end
+
 function RB:UpdateAutoDepositTickerControls()
     local frame = self.colorSettingsFrame
     if not frame then
@@ -1590,7 +1806,7 @@ function RB:UpdateAutoDepositTickerControls()
     local seconds = self:GetAutoDepositTickerSeconds()
 
     if frame.autoDepositIntervalBox then
-        local desiredText = tostring(seconds)
+        local desiredText = tostring(seconds > 0 and seconds or AUTO_DEPOSIT_TICKER_DEFAULT_SECONDS)
         if frame.autoDepositIntervalBox:GetText() ~= desiredText then
             frame.autoDepositIntervalBox:SetText(desiredText)
         end
@@ -1600,7 +1816,7 @@ function RB:UpdateAutoDepositTickerControls()
         if seconds > 0 then
             frame.autoDepositStatus:SetText("Enabled: Deposit All runs every " .. tostring(seconds) .. " second(s).")
         else
-            frame.autoDepositStatus:SetText("Disabled. Enter 0 to keep it off, or 30-3600 seconds to enable.")
+            frame.autoDepositStatus:SetText("Disabled. Apply enables every " .. tostring(AUTO_DEPOSIT_TICKER_DEFAULT_SECONDS) .. " seconds; enter 0 or click Off to keep it off.")
         end
     end
 end
@@ -2372,9 +2588,15 @@ function RB:CreateAuctionShoppingFrame()
         end
     end)
 
+    frame.clear = self:CreateButton(frame, 70, 22, "Clear")
+    frame.clear:SetPoint("BOTTOMRIGHT", -10, 34)
+    frame.clear:SetScript("OnClick", function()
+        RB:ClearShoppingList()
+    end)
+
     frame.pageText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     frame.pageText:SetPoint("LEFT", frame.next, "RIGHT", 8, 0)
-    frame.pageText:SetPoint("RIGHT", -10, 0)
+    frame.pageText:SetPoint("RIGHT", frame.clear, "LEFT", -8, 0)
     frame.pageText:SetJustifyH("RIGHT")
     frame.pageText:SetText("")
 
@@ -2397,8 +2619,10 @@ function RB:UpdateAuctionShoppingControls()
 
     local page = tonumber(frame.page) or 0
     local totalPages = math.max(tonumber(frame.totalPages) or 1, 1)
+    local shoppingTypes = self:GetShoppingListTotals()
     self:SetButtonEnabled(frame.prev, page > 0)
     self:SetButtonEnabled(frame.next, page + 1 < totalPages)
+    self:SetButtonEnabled(frame.clear, shoppingTypes > 0)
 end
 
 function RB:ClearAuctionShoppingRows()
@@ -3074,10 +3298,11 @@ function RB:UpdateQuickWithdrawControls()
     local item = self.promptItem
     local stored = item and (tonumber(item.amount) or 0) or 0
     local amount = self:GetWithdrawPromptAmount()
+    local missingAmount = math.max(0, amount - stored)
     local enabled = self.busyKind == nil and item ~= nil and stored > 0 and amount > 0 and amount <= stored
 
     if amount > stored and stored > 0 then
-        self.frame.quickWithdrawHint:SetText("Amount is higher than stored. Enter " .. FormatCount(stored) .. " or less.")
+        self.frame.quickWithdrawHint:SetText("Only " .. FormatCount(stored) .. " stored. Add " .. FormatCount(missingAmount) .. " missing to the AH list.")
         self.frame.quickWithdrawHint:SetTextColor(1.00, 0.50, 0.35)
     else
         self.frame.quickWithdrawHint:SetText("")
@@ -3086,6 +3311,7 @@ function RB:UpdateQuickWithdrawControls()
 
     self:SetButtonEnabled(self.frame.quickWithdrawButton, enabled)
     self:SetButtonEnabled(self.frame.quickWithdrawAll, self.busyKind == nil and item ~= nil and stored > 0)
+    self:SetButtonEnabled(self.frame.quickWithdrawShopping, self.busyKind == nil and item ~= nil and missingAmount > 0)
     self:SetButtonEnabled(self.frame.quickWithdrawCancel, true)
 end
 
@@ -3098,6 +3324,28 @@ function RB:SetWithdrawPromptAmountToAll()
     self.frame.quickWithdrawBox:SetText(tostring(math.floor(stored)))
     self.frame.quickWithdrawBox:HighlightText()
     self:UpdateQuickWithdrawControls()
+end
+
+function RB:AddWithdrawPromptMissingToShoppingList()
+    local item = self.promptItem
+    if not item or not item.entry then
+        self:HideWithdrawPrompt()
+        return
+    end
+
+    local stored = math.max(tonumber(item.amount) or 0, 0)
+    local amount = self:GetWithdrawPromptAmount()
+    local missingAmount = math.max(0, amount - stored)
+
+    if missingAmount <= 0 then
+        self:Status("Enter more than the stored amount to add the shortfall to the AH list.", 1.00, 0.82, 0.32)
+        self:UpdateQuickWithdrawControls()
+        return
+    end
+
+    local itemEntry = item.entry
+    self:HideWithdrawPrompt()
+    self:AddShoppingListItem(itemEntry, missingAmount)
 end
 
 function RB:ShowWithdrawPrompt(item)
@@ -4200,7 +4448,7 @@ function RB:CreateColorSettingsFrame()
 
     local frame = CreateFrame("Frame", "ReagentBankUIColorSettingsFrame", UIParent)
     frame:SetWidth(430)
-    frame:SetHeight(350)
+    frame:SetHeight(540)
     frame:SetMovable(true)
     frame:EnableMouse(true)
     frame:SetClampedToScreen(true)
@@ -4211,6 +4459,14 @@ function RB:CreateColorSettingsFrame()
     end)
     frame:SetScript("OnDragStop", function(selfFrame)
         selfFrame:StopMovingOrSizing()
+        ReagentBankUIDB = ReagentBankUIDB or {}
+        local point, relativeTo, relativePoint, xOfs, yOfs = selfFrame:GetPoint(1)
+        ReagentBankUIDB.settingsPoint = {
+            point = point or "CENTER",
+            relativePoint = relativePoint or point or "CENTER",
+            x = xOfs or 0,
+            y = yOfs or 0,
+        }
     end)
 
     self:MakeBackdrop(frame, 0.98, true)
@@ -4235,40 +4491,61 @@ function RB:CreateColorSettingsFrame()
     frame.note:SetText("Settings are saved per account.")
     frame.note:SetTextColor(SKIN.mutedText[1], SKIN.mutedText[2], SKIN.mutedText[3], SKIN.mutedText[4] or 1)
 
+    frame.styleHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    frame.styleHeader:SetPoint("TOPLEFT", 18, -66)
+    frame.styleHeader:SetJustifyH("LEFT")
+    frame.styleHeader:SetText("Frame Style")
+    frame.styleHeader:SetTextColor(SKIN.titleText[1], SKIN.titleText[2], SKIN.titleText[3], SKIN.titleText[4] or 1)
+
+    frame.styleButtons = {}
+    local previousStyleButton
+    for index, styleKey in ipairs(FRAME_STYLE_ORDER) do
+        local style = FRAME_STYLES[styleKey]
+        local button = self:CreateButton(frame, 158, 26, style and style.label or styleKey)
+        button.styleKey = styleKey
+        if index == 1 then
+            button:SetPoint("TOPLEFT", frame.styleHeader, "BOTTOMLEFT", 0, -8)
+        else
+            button:SetPoint("LEFT", previousStyleButton, "RIGHT", 14, 0)
+        end
+        button:SetScript("OnClick", function(selfButton)
+            RB:SetFrameStyle(selfButton.styleKey)
+        end)
+        table.insert(frame.styleButtons, button)
+        previousStyleButton = button
+    end
+
     frame.themeHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    frame.themeHeader:SetPoint("TOPLEFT", 18, -66)
+    frame.themeHeader:SetPoint("TOPLEFT", frame.styleHeader, "BOTTOMLEFT", 0, -48)
     frame.themeHeader:SetJustifyH("LEFT")
-    frame.themeHeader:SetText("Color schema")
+    frame.themeHeader:SetText("Color Scheme")
     frame.themeHeader:SetTextColor(SKIN.titleText[1], SKIN.titleText[2], SKIN.titleText[3], SKIN.titleText[4] or 1)
 
     frame.themeButtons = {}
 
+    local columns = 2
     local firstColumnX = 18
-    local secondColumnX = 218
-    local firstRowY = -88
+    local columnGap = 200
+    local firstRowY = -144
     local rowGap = 34
     local buttonWidth = 158
     local buttonHeight = 26
 
     for index, themeKey in ipairs(SKIN_THEME_ORDER) do
-        local columnX = firstColumnX
-        local rowIndex = index
-
-        if index > 3 then
-            columnX = secondColumnX
-            rowIndex = index - 3
-        end
+        local column = (index - 1) % columns
+        local row = math.floor((index - 1) / columns)
+        local columnX = firstColumnX + (column * columnGap)
 
         local theme = SKIN_THEMES[themeKey]
         local button = self:CreateButton(frame, buttonWidth, buttonHeight, theme and theme.label or themeKey)
         button.themeKey = themeKey
-        button:SetPoint("TOPLEFT", columnX, firstRowY - ((rowIndex - 1) * rowGap))
+        button:SetPoint("TOPLEFT", columnX, firstRowY - (row * rowGap))
         button:SetScript("OnClick", function(selfButton)
             RB:SetColorTheme(selfButton.themeKey)
         end)
         button:SetScript("OnEnter", function(selfButton)
             GameTooltip:SetOwner(selfButton, "ANCHOR_RIGHT")
-            GameTooltip:SetText("Color Schema", 1, 0.82, 0)
+            GameTooltip:SetText("Color Scheme", 1, 0.82, 0)
             GameTooltip:AddLine("Apply " .. RB:GetColorThemeLabel(selfButton.themeKey) .. ".", 1, 1, 1, true)
             GameTooltip:Show()
         end)
@@ -4277,21 +4554,48 @@ function RB:CreateColorSettingsFrame()
         table.insert(frame.themeButtons, button)
     end
 
+    local themeRows = math.ceil(#SKIN_THEME_ORDER / columns)
+    local afterThemesY = firstRowY - (themeRows * rowGap) - 8
+
+    frame.scaleHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    frame.scaleHeader:SetPoint("TOPLEFT", 18, afterThemesY)
+    frame.scaleHeader:SetJustifyH("LEFT")
+    frame.scaleHeader:SetText("Window Scale")
+    frame.scaleHeader:SetTextColor(SKIN.titleText[1], SKIN.titleText[2], SKIN.titleText[3], SKIN.titleText[4] or 1)
+
+    frame.scaleMinus = self:CreateButton(frame, 28, 24, "-")
+    frame.scaleMinus:SetPoint("TOPLEFT", frame.scaleHeader, "BOTTOMLEFT", 0, -8)
+    frame.scaleMinus:SetScript("OnClick", function()
+        RB:SetScaleValue((ReagentBankUIDB and ReagentBankUIDB.scale or DEFAULT_SCALE) - 0.05)
+    end)
+
+    frame.scaleValue = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.scaleValue:SetPoint("LEFT", frame.scaleMinus, "RIGHT", 8, 0)
+    frame.scaleValue:SetWidth(58)
+    frame.scaleValue:SetJustifyH("CENTER")
+    frame.scaleValue:SetTextColor(SKIN.mutedText[1], SKIN.mutedText[2], SKIN.mutedText[3], SKIN.mutedText[4] or 1)
+
+    frame.scalePlus = self:CreateButton(frame, 28, 24, "+")
+    frame.scalePlus:SetPoint("LEFT", frame.scaleValue, "RIGHT", 8, 0)
+    frame.scalePlus:SetScript("OnClick", function()
+        RB:SetScaleValue((ReagentBankUIDB and ReagentBankUIDB.scale or DEFAULT_SCALE) + 0.05)
+    end)
+
     frame.autoDepositHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    frame.autoDepositHeader:SetPoint("TOPLEFT", 18, -198)
+    frame.autoDepositHeader:SetPoint("TOPLEFT", frame.scaleMinus, "BOTTOMLEFT", 0, -22)
     frame.autoDepositHeader:SetJustifyH("LEFT")
     frame.autoDepositHeader:SetText("Periodic auto-deposit")
     frame.autoDepositHeader:SetTextColor(SKIN.titleText[1], SKIN.titleText[2], SKIN.titleText[3], SKIN.titleText[4] or 1)
 
     frame.autoDepositNote = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    frame.autoDepositNote:SetPoint("TOPLEFT", 18, -218)
+    frame.autoDepositNote:SetPoint("TOPLEFT", frame.autoDepositHeader, "BOTTOMLEFT", 0, -6)
     frame.autoDepositNote:SetPoint("RIGHT", -18, 0)
     frame.autoDepositNote:SetJustifyH("LEFT")
     frame.autoDepositNote:SetText("Runs Deposit All on a timer while you are online. Enter 0 to disable. Minimum: 30 seconds.")
     frame.autoDepositNote:SetTextColor(SKIN.mutedText[1], SKIN.mutedText[2], SKIN.mutedText[3], SKIN.mutedText[4] or 1)
 
     frame.autoDepositLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    frame.autoDepositLabel:SetPoint("TOPLEFT", 20, -248)
+    frame.autoDepositLabel:SetPoint("TOPLEFT", frame.autoDepositNote, "BOTTOMLEFT", 2, -14)
     frame.autoDepositLabel:SetText("Every")
     frame.autoDepositLabel:SetJustifyH("LEFT")
     frame.autoDepositLabel:SetTextColor(SKIN.mutedText[1], SKIN.mutedText[2], SKIN.mutedText[3], SKIN.mutedText[4] or 1)
@@ -4327,22 +4631,39 @@ function RB:CreateColorSettingsFrame()
     end)
 
     frame.autoDepositStatus = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    frame.autoDepositStatus:SetPoint("TOPLEFT", 20, -278)
+    frame.autoDepositStatus:SetPoint("TOPLEFT", frame.autoDepositLabel, "BOTTOMLEFT", 0, -28)
     frame.autoDepositStatus:SetPoint("RIGHT", -18, 0)
     frame.autoDepositStatus:SetJustifyH("LEFT")
     frame.autoDepositStatus:SetText("")
     frame.autoDepositStatus:SetTextColor(SKIN.mutedText[1], SKIN.mutedText[2], SKIN.mutedText[3], SKIN.mutedText[4] or 1)
 
-    frame.cycle = self:CreateButton(frame, 188, 26, "Cycle Theme")
+    frame.cycle = self:CreateButton(frame, 112, 26, "Cycle")
     frame.cycle:SetPoint("BOTTOMLEFT", 18, 16)
     frame.cycle:SetScript("OnClick", function()
         RB:CycleColorTheme()
     end)
 
-    frame.reset = self:CreateButton(frame, 188, 26, "Reset to Gold")
+    frame.reset = self:CreateButton(frame, 128, 26, "Reset Style")
     frame.reset:SetPoint("LEFT", frame.cycle, "RIGHT", 12, 0)
     frame.reset:SetScript("OnClick", function()
+        RB:SetFrameStyle(DEFAULT_FRAME_STYLE, true)
         RB:SetColorTheme(DEFAULT_COLOR_THEME)
+    end)
+
+    frame.resetWindow = self:CreateButton(frame, 128, 26, "Reset Window")
+    frame.resetWindow:SetPoint("LEFT", frame.reset, "RIGHT", 12, 0)
+    frame.resetWindow:SetScript("OnClick", function()
+        ReagentBankUIDB = ReagentBankUIDB or {}
+        ReagentBankUIDB.point = nil
+        ReagentBankUIDB.relativePoint = nil
+        ReagentBankUIDB.xOfs = nil
+        ReagentBankUIDB.yOfs = nil
+        RB:SetScaleValue(DEFAULT_SCALE, true)
+        if RB.frame then
+            RB.frame:ClearAllPoints()
+            RB.frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+        end
+        RB:Status("Window position and scale reset.", 0.82, 0.82, 0.82)
     end)
 
     self.colorSettingsFrame = frame
@@ -4359,6 +4680,25 @@ function RB:UpdateColorSettingsFrame()
     end
 
     local selected = self:GetColorThemeKey()
+    local selectedStyle = self:GetFrameStyleKey()
+
+    if frame.styleButtons then
+        for _, button in ipairs(frame.styleButtons) do
+            local style = FRAME_STYLES[button.styleKey]
+            local label = style and style.label or button.styleKey
+            if button.styleKey == selectedStyle then
+                button:SetText("* " .. label)
+                if button.SetBackdropBorderColor then
+                    button:SetBackdropBorderColor(SKIN.headerLine[1], SKIN.headerLine[2], SKIN.headerLine[3], SKIN.headerLine[4])
+                end
+            else
+                button:SetText(label)
+                if button.SetBackdropBorderColor then
+                    button:SetBackdropBorderColor(SKIN.buttonBorder[1], SKIN.buttonBorder[2], SKIN.buttonBorder[3], SKIN.buttonBorder[4])
+                end
+            end
+        end
+    end
 
     if frame.themeButtons then
         for _, button in ipairs(frame.themeButtons) do
@@ -4366,7 +4706,7 @@ function RB:UpdateColorSettingsFrame()
             local label = self:GetColorThemeLabel(themeKey)
 
             if themeKey == selected then
-                button:SetText("✓ " .. label)
+                button:SetText("* " .. label)
                 if button.SetBackdropBorderColor then
                     button:SetBackdropBorderColor(SKIN.headerLine[1], SKIN.headerLine[2], SKIN.headerLine[3], SKIN.headerLine[4])
                 end
@@ -4380,11 +4720,17 @@ function RB:UpdateColorSettingsFrame()
     end
 
     if frame.cycle then
-        frame.cycle:SetText("Cycle Theme")
+        frame.cycle:SetText("Cycle")
     end
 
     if frame.reset then
-        frame.reset:SetText("Reset to Gold")
+        frame.reset:SetText("Reset Style")
+    end
+
+    if frame.scaleValue then
+        ReagentBankUIDB = ReagentBankUIDB or {}
+        local scale = Clamp(ReagentBankUIDB.scale or DEFAULT_SCALE, 0.75, 1.20)
+        frame.scaleValue:SetText(tostring(math.floor((scale * 100) + 0.5)) .. "%")
     end
 
     self:UpdateAutoDepositTickerControls()
@@ -4397,7 +4743,16 @@ function RB:ShowColorSettings()
     local frame = self.colorSettingsFrame
     frame:ClearAllPoints()
 
-    if self.paperDollButton and self.paperDollButton:IsShown() then
+    ReagentBankUIDB = ReagentBankUIDB or {}
+    if ReagentBankUIDB.settingsPoint and ReagentBankUIDB.settingsPoint.point then
+        frame:SetPoint(
+            ReagentBankUIDB.settingsPoint.point,
+            UIParent,
+            ReagentBankUIDB.settingsPoint.relativePoint or ReagentBankUIDB.settingsPoint.point,
+            ReagentBankUIDB.settingsPoint.x or 0,
+            ReagentBankUIDB.settingsPoint.y or 0
+        )
+    elseif self.paperDollButton and self.paperDollButton:IsShown() then
         frame:SetPoint("TOPLEFT", self.paperDollButton, "BOTTOMLEFT", -14, -10)
     else
         frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
@@ -4522,7 +4877,7 @@ function RB:CreatePaperDollButton()
         GameTooltip:SetText("Reagent Bank", 1, 0.82, 0)
         GameTooltip:AddLine("Left-click: open or close.", 1, 1, 1)
         GameTooltip:AddLine("Right-click: refresh categories.", 0.82, 0.82, 0.82)
-        GameTooltip:AddLine("Ctrl-click: color schema settings.", 0.62, 0.88, 1.00)
+        GameTooltip:AddLine("Ctrl-click: settings.", 0.62, 0.88, 1.00)
         GameTooltip:Show()
     end)
 
@@ -4717,7 +5072,7 @@ function RB:CreateTradeSkillControls()
     quantityBox:SetNumeric(true)
     quantityBox:SetFontObject(ChatFontNormal)
     quantityBox:SetTextInsets(6, 6, 0, 0)
-    quantityBox:SetBackdrop(BUTTON_BACKDROP)
+    quantityBox:SetBackdrop(GetButtonBackdrop())
     quantityBox:SetBackdropColor(SKIN.inputBg[1], SKIN.inputBg[2], SKIN.inputBg[3], SKIN.inputBg[4])
     quantityBox:SetBackdropBorderColor(SKIN.buttonBorder[1], SKIN.buttonBorder[2], SKIN.buttonBorder[3], SKIN.buttonBorder[4])
     quantityBox:SetTextColor(SKIN.inputText[1], SKIN.inputText[2], SKIN.inputText[3], SKIN.inputText[4] or 1)
@@ -4872,11 +5227,22 @@ function RB:ApplyScale()
     self.frame:SetScale(scale)
 end
 
+function RB:SetScaleValue(scale, silent)
+    ReagentBankUIDB = ReagentBankUIDB or {}
+    ReagentBankUIDB.scale = Clamp(tonumber(scale) or DEFAULT_SCALE, 0.75, 1.20)
+    self:ApplyScale()
+    self:UpdateColorSettingsFrame()
+
+    if not silent then
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff33ff99ReagentBankUI|r scale set to %.2f", ReagentBankUIDB.scale))
+    end
+end
+
 function RB:CreateButton(parent, width, height, label)
     local button = CreateFrame("Button", nil, parent, "ReagentBankUIButtonTemplate")
     button:SetWidth(width)
     button:SetHeight(height)
-    button:SetBackdrop(BUTTON_BACKDROP)
+    button:SetBackdrop(GetButtonBackdrop())
     button:SetBackdropColor(SKIN.buttonBg[1], SKIN.buttonBg[2], SKIN.buttonBg[3], SKIN.buttonBg[4])
     button:SetBackdropBorderColor(SKIN.buttonBorder[1], SKIN.buttonBorder[2], SKIN.buttonBorder[3], SKIN.buttonBorder[4])
 
@@ -4923,7 +5289,7 @@ function RB:CreateEditBox(parent, width, height)
     box:SetNumeric(true)
     box:SetFontObject(ChatFontNormal)
     box:SetTextInsets(6, 6, 0, 0)
-    box:SetBackdrop(BUTTON_BACKDROP)
+    box:SetBackdrop(GetButtonBackdrop())
     box:SetBackdropColor(SKIN.inputBg[1], SKIN.inputBg[2], SKIN.inputBg[3], SKIN.inputBg[4])
     box:SetBackdropBorderColor(SKIN.buttonBorder[1], SKIN.buttonBorder[2], SKIN.buttonBorder[3], SKIN.buttonBorder[4])
     box:SetTextColor(SKIN.inputText[1], SKIN.inputText[2], SKIN.inputText[3], SKIN.inputText[4] or 1)
@@ -4945,7 +5311,7 @@ function RB:CreateCloseButton(parent)
     local button = CreateFrame("Button", nil, parent, "ReagentBankUICloseButtonTemplate")
     button:SetWidth(24)
     button:SetHeight(24)
-    button:SetBackdrop(BUTTON_BACKDROP)
+    button:SetBackdrop(GetButtonBackdrop())
     button:SetBackdropColor(SKIN.closeBg[1], SKIN.closeBg[2], SKIN.closeBg[3], SKIN.closeBg[4])
     button:SetBackdropBorderColor(SKIN.closeBorder[1], SKIN.closeBorder[2], SKIN.closeBorder[3], SKIN.closeBorder[4])
 
@@ -4955,6 +5321,7 @@ function RB:CreateCloseButton(parent)
 
     if button.label then
         button.label:SetText("X")
+        button.label:SetFont(STANDARD_TEXT_FONT, 14, "OUTLINE")
     end
 
     self:StyleCloseButton(button)
@@ -5023,7 +5390,7 @@ function RB:CreateFrame()
     f.header:SetPoint("TOPLEFT", 8, -8)
     f.header:SetPoint("TOPRIGHT", -8, -8)
     f.header:SetHeight(42)
-    f.header:SetBackdrop(PANEL_BACKDROP)
+    f.header:SetBackdrop(IsElvUIFrameStyle() and PANEL_BACKDROP or BACKDROP)
     f.header:SetBackdropColor(SKIN.headerBg[1], SKIN.headerBg[2], SKIN.headerBg[3], SKIN.headerBg[4])
     f.header:SetBackdropBorderColor(SKIN.windowBorder[1], SKIN.windowBorder[2], SKIN.windowBorder[3], SKIN.windowBorder[4])
 
@@ -5322,7 +5689,7 @@ function RB:CreateFrame()
     f.detailIconBorder:SetWidth(62)
     f.detailIconBorder:SetHeight(62)
     f.detailIconBorder:SetPoint("TOPLEFT", 16, -16)
-    f.detailIconBorder:SetBackdrop(BUTTON_BACKDROP)
+    f.detailIconBorder:SetBackdrop(GetButtonBackdrop())
     f.detailIconBorder:SetBackdropColor(0.02, 0.02, 0.03, 0.90)
     f.detailIconBorder:SetBackdropBorderColor(SKIN.buttonBorder[1], SKIN.buttonBorder[2], SKIN.buttonBorder[3], SKIN.buttonBorder[4])
 
@@ -5418,7 +5785,7 @@ function RB:CreateFrame()
 
     f.quickWithdraw = CreateFrame("Frame", nil, f)
     f.quickWithdraw:SetWidth(QUICK_WITHDRAW_WIDTH)
-    f.quickWithdraw:SetHeight(154)
+    f.quickWithdraw:SetHeight(188)
     f.quickWithdraw:SetPoint("CENTER", f, "CENTER", 0, 18)
     f.quickWithdraw:SetFrameLevel((f:GetFrameLevel() or 1) + 80)
     f.quickWithdraw:EnableMouse(true)
@@ -5481,6 +5848,12 @@ function RB:CreateFrame()
         RB:SetWithdrawPromptAmountToAll()
     end)
 
+    f.quickWithdrawShopping = self:CreateButton(f.quickWithdraw, 148, 26, "Add Missing to AH")
+    f.quickWithdrawShopping:SetPoint("TOPLEFT", 18, -126)
+    f.quickWithdrawShopping:SetScript("OnClick", function()
+        RB:AddWithdrawPromptMissingToShoppingList()
+    end)
+
     f.quickWithdrawCancel = self:CreateButton(f.quickWithdraw, 82, 26, "Cancel")
     f.quickWithdrawCancel:SetPoint("LEFT", f.quickWithdrawAll, "RIGHT", 8, 0)
     f.quickWithdrawCancel:SetScript("OnClick", function()
@@ -5488,7 +5861,7 @@ function RB:CreateFrame()
     end)
 
     f.quickWithdrawHint = f.quickWithdraw:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    f.quickWithdrawHint:SetPoint("TOPLEFT", 18, -126)
+    f.quickWithdrawHint:SetPoint("TOPLEFT", 18, -158)
     f.quickWithdrawHint:SetPoint("RIGHT", -18, 0)
     f.quickWithdrawHint:SetJustifyH("LEFT")
     f.quickWithdrawHint:SetText("")
@@ -6700,6 +7073,18 @@ SlashCmdList["REAGENTBANKUI"] = function(msg)
         return
     end
 
+    if command == "style" or command == "frames" or command == "frame" then
+        local lowerValue = string.lower(Trim(value or ""))
+
+        if lowerValue == "" or lowerValue == "settings" or lowerValue == "options" then
+            RB:ToggleColorSettings()
+        else
+            RB:SetFrameStyle(lowerValue)
+        end
+
+        return
+    end
+
     if command == "theme" or command == "schema" or command == "scheme" then
         local lowerValue = string.lower(Trim(value or ""))
 
@@ -6764,10 +7149,7 @@ SlashCmdList["REAGENTBANKUI"] = function(msg)
         local numberValue = tonumber(value)
 
         if numberValue then
-            ReagentBankUIDB = ReagentBankUIDB or {}
-            ReagentBankUIDB.scale = Clamp(numberValue, 0.75, 1.20)
-            RB:ApplyScale()
-            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff33ff99ReagentBankUI|r scale set to %.2f", ReagentBankUIDB.scale))
+            RB:SetScaleValue(numberValue)
             return
         end
 
@@ -6787,6 +7169,7 @@ SlashCmdList["REAGENTBANKUI"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank craft 5")
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank lowstock 5")
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank undo")
+    DEFAULT_CHAT_FRAME:AddMessage("  /rbank style classic|elvui")
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank scale 0.75 - 1.20")
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank ticker 0|30-3600")
     DEFAULT_CHAT_FRAME:AddMessage("  /rbank autodeposit on|off")
@@ -6798,6 +7181,11 @@ RB:SetScript("OnEvent", function(self, event, ...)
 
         if addonName == ADDON_NAME then
             ReagentBankUIDB = ReagentBankUIDB or {}
+            local savedScale = tonumber(ReagentBankUIDB.scale)
+            if ReagentBankUIDB.scale == nil or (savedScale and math.abs(savedScale - 0.92) < 0.001) then
+                ReagentBankUIDB.scale = DEFAULT_SCALE
+            end
+            ReagentBankUIDB.frameStyle = NormalizeFrameStyleKey(ReagentBankUIDB.frameStyle)
             if ReagentBankUIDB.autoDepositLeftovers == nil then
                 ReagentBankUIDB.autoDepositLeftovers = false
             end

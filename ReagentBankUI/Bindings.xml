@@ -1,0 +1,8 @@
+<Bindings>
+    <Binding name="REAGENTBANKUI_AUTO_DEPOSIT_APPLY" header="REAGENTBANKUI" category="ADDONS">
+        ReagentBankUI_PeriodicAutoDepositApply();
+    </Binding>
+    <Binding name="REAGENTBANKUI_AUTO_DEPOSIT_OFF" category="ADDONS">
+        ReagentBankUI_PeriodicAutoDepositOff();
+    </Binding>
+</Bindings>
