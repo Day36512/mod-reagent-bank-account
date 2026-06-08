@@ -1,5 +1,5 @@
 ## Interface: 30300
-## Title: |cff33ccff[Required]|r Reagent Bank UI |cffff0000DO NOT DISABLE|r
+## Title: Reagent Bank UI
 ## Notes: Standalone UI for the AzerothCore Reagent Bank Account module. No banker NPC required.
 ## Author: Dinkledork
 ## Version: 2.1.2-shopping-list
