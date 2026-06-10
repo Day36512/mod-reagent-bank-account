@@ -62,6 +62,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 uint32 g_reagentBankMaxItemsPerPage = DEFAULT_REAGENT_BANK_ITEMS_PER_PAGE;
@@ -70,6 +71,7 @@ bool g_reagentBankEnabled = true;
 bool g_reagentBankAutoMigrate = true;
 
 static bool g_reagentBankStorageReady = false;
+static std::unordered_set<uint32> g_reagentBankDepositExclusions;
 
 using Acore::ChatCommands::ChatCommandTable;
 using Acore::ChatCommands::Console;
@@ -371,6 +373,40 @@ namespace ReagentBank
             "`updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
             "PRIMARY KEY (`setting`)"
             ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        WorldDatabase.DirectExecute(
+            "CREATE TABLE IF NOT EXISTS `mod_reagent_bank_account_deposit_exclusions_zz_custom` ("
+            "`item_entry` INT UNSIGNED NOT NULL,"
+            "`comment` VARCHAR(255) NULL DEFAULT NULL,"
+            "PRIMARY KEY (`item_entry`)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    }
+
+    static void LoadDepositExclusions()
+    {
+        g_reagentBankDepositExclusions.clear();
+
+        QueryResult result = WorldDatabase.Query(
+            "SELECT `item_entry` FROM `mod_reagent_bank_account_deposit_exclusions_zz_custom`");
+
+        if (!result)
+        {
+            LOG_INFO("module", "ReagentBankAccount: loaded 0 reagent bank deposit exclusion item(s).");
+            return;
+        }
+
+        do
+        {
+            if (uint32 itemEntry = (*result)[0].Get<uint32>())
+                g_reagentBankDepositExclusions.insert(itemEntry);
+        } while (result->NextRow());
+
+        LOG_INFO("module", "ReagentBankAccount: loaded {} reagent bank deposit exclusion item(s).", g_reagentBankDepositExclusions.size());
+    }
+
+    static bool IsDepositExcluded(uint32 itemEntry)
+    {
+        return itemEntry && g_reagentBankDepositExclusions.contains(itemEntry);
     }
 
     static std::string GetStoredStorageMode()
@@ -810,6 +846,9 @@ namespace ReagentBank
         if (!IsStorableReagent(item->GetTemplate(), itemEntry, itemSubclass))
             return 0;
 
+        if (IsDepositExcluded(itemEntry))
+            return 0;
+
         if (onlyCategory && itemSubclass != onlyCategory)
             return 0;
 
@@ -907,6 +946,9 @@ namespace ReagentBank
         uint32 itemEntry = 0;
         uint32 itemSubclass = 0;
         if (!IsStorableReagent(item->GetTemplate(), itemEntry, itemSubclass))
+            return 0;
+
+        if (IsDepositExcluded(itemEntry))
             return 0;
 
         if (onlyCategory && itemSubclass != onlyCategory)
@@ -1008,6 +1050,9 @@ namespace ReagentBank
             uint32 itemEntry = 0;
             uint32 itemSubclass = 0;
             if (!IsStorableReagent(proto, itemEntry, itemSubclass))
+                continue;
+
+            if (IsDepositExcluded(itemEntry))
                 continue;
 
             uint32 const availableInBags = player->GetItemCount(itemEntry, false);
@@ -1833,6 +1878,7 @@ public:
         if (reload)
         {
             ReagentBank::EnsureStorageModeMatchesConfig();
+            ReagentBank::LoadDepositExclusions();
             g_reagentBankStorageReady = true;
 
             LOG_INFO("module", "Standalone Reagent Bank config reloaded. Enabled: {}, AccountWide: {}, AutoMigrate: {}, MaxItemsPerPage: {}",
@@ -1847,6 +1893,7 @@ public:
     {
         ReagentBank::LoadConfig();
         ReagentBank::EnsureStorageModeMatchesConfig();
+        ReagentBank::LoadDepositExclusions();
         g_reagentBankStorageReady = true;
 
         LOG_INFO("module", "Standalone Reagent Bank command module loaded. Enabled: {}, AccountWide: {}, AutoMigrate: {}, MaxItemsPerPage: {}",
