@@ -35,6 +35,7 @@ Open a profession window and ReagentBankUI adds reagent tools directly to the pr
 - Shows reagent availability from bags and reagent bank
 - Optional leftover auto-deposit when closing the profession window
 - **Add to AH List** adds missing recipe reagents to the shopping list
+- Note that the UI icon is attached to the outside lower portion of the character frame by default.
 
 <img width="1305" height="906" alt="Reagent2" src="https://github.com/user-attachments/assets/ee0a2073-7406-4137-885d-034b2ca0104f" />
 
