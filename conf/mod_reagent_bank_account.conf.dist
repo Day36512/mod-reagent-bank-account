@@ -1,23 +1,40 @@
 [worldserver]
 
-########################################
-# Reagent Bank Account Config
-########################################
+#
+# Standalone Reagent Bank Account
+#
 
+#
 #    ReagentBankAccount.Enable
-#        Description: Enable the reagent bank (account-wide)
-#        Default:     0 - Disabled
-#                     1 - Enabled
+#        Description: Enables the standalone .rbank command API used by the addon.
+#        Default:     1
+#
 ReagentBankAccount.Enable = 1
 
-#    ReagentBankAccount.AccountWide
-#        Description: Account-wide reagent bank
-#        Default:     0 - Disabled
-#                     1 - Enabled
-ReagentBankAccount.AccountWide = 0
-
-#    ReagentBankAccount.MaxOptionsPerPage
-#        Description: Number of items shown per page in the reagent bank NPC menu
-#        Default:     16
 #
-ReagentBankAccount.MaxOptionsPerPage = 16
+#    ReagentBankAccount.AccountWide
+#        Description: 0 = storage is per character.
+#                     1 = storage is shared by all characters on the same account.
+#        Default:     0
+#
+ReagentBankAccount.AccountWide = 1
+
+#
+#    ReagentBankAccount.AutoMigrate
+#        Description: Automatically rewrites mod_reagent_bank_account rows when
+#                     ReagentBankAccount.AccountWide changes.
+#                     Character -> Account: sums all characters on the same account.
+#                     Account -> Character: moves the shared account bank to the
+#                     account's lowest GUID character because original ownership
+#                     cannot be reconstructed after account-wide merge.
+#        Default:     1
+#
+ReagentBankAccount.AutoMigrate = 1
+
+#
+#    ReagentBankAccount.MaxItemsPerPage
+#        Description: Number of stored item rows returned to the addon per category page.
+#                     Kept capped at 50 in C++ to avoid excessive chat protocol traffic.
+#        Default:     12
+#
+ReagentBankAccount.MaxItemsPerPage = 16
