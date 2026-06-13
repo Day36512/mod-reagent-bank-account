@@ -35,6 +35,6 @@ ReagentBankAccount.AutoMigrate = 1
 #    ReagentBankAccount.MaxItemsPerPage
 #        Description: Number of stored item rows returned to the addon per category page.
 #                     Kept capped at 50 in C++ to avoid excessive chat protocol traffic.
-#        Default:     12
+#        Default:     16
 #
 ReagentBankAccount.MaxItemsPerPage = 16
