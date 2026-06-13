@@ -15,7 +15,7 @@ ReagentBankAccount.Enable = 1
 #    ReagentBankAccount.AccountWide
 #        Description: 0 = storage is per character.
 #                     1 = storage is shared by all characters on the same account.
-#        Default:     0
+#        Default:     1
 #
 ReagentBankAccount.AccountWide = 1
 
