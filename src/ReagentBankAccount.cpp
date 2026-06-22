@@ -47,6 +47,7 @@
 #include "Item.h"
 #include "ItemTemplate.h"
 #include "Log.h"
+#include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "ScriptMgr.h"
@@ -62,6 +63,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -71,7 +73,9 @@ bool g_reagentBankEnabled = true;
 bool g_reagentBankAutoMigrate = true;
 
 static bool g_reagentBankStorageReady = false;
+static bool g_reagentBankSharingEnabled = false;
 static std::unordered_set<uint32> g_reagentBankDepositExclusions;
+static std::unordered_map<uint32, uint32> g_shareOwnerByKey;
 
 using Acore::ChatCommands::ChatCommandTable;
 using Acore::ChatCommands::Console;
@@ -315,13 +319,18 @@ namespace ReagentBank
     {
         if (g_accountWideReagentBank)
         {
-            accountKey = player->GetSession()->GetAccountId();
+            uint32 const accountId = player->GetSession()->GetAccountId();
+            auto const it = g_shareOwnerByKey.find(accountId);
+            accountKey = it != g_shareOwnerByKey.end() ? it->second : accountId;
             guidKey = 0;
         }
         else
         {
             accountKey = 0;
             guidKey = uint32(player->GetGUID().GetCounter());
+            auto const it = g_shareOwnerByKey.find(guidKey);
+            if (it != g_shareOwnerByKey.end())
+                guidKey = it->second;
         }
     }
 
@@ -336,6 +345,7 @@ namespace ReagentBank
         g_accountWideReagentBank = sConfigMgr->GetOption<bool>("ReagentBankAccount.AccountWide", false);
         g_reagentBankMaxItemsPerPage = sConfigMgr->GetOption<uint32>("ReagentBankAccount.MaxItemsPerPage", DEFAULT_REAGENT_BANK_ITEMS_PER_PAGE);
         g_reagentBankAutoMigrate = sConfigMgr->GetOption<bool>("ReagentBankAccount.AutoMigrate", true);
+        g_reagentBankSharingEnabled = sConfigMgr->GetOption<bool>("ReagentBankAccount.EnableSharing", false);
 
         if (g_reagentBankMaxItemsPerPage == 0)
             g_reagentBankMaxItemsPerPage = DEFAULT_REAGENT_BANK_ITEMS_PER_PAGE;
@@ -380,6 +390,43 @@ namespace ReagentBank
             "`comment` VARCHAR(255) NULL DEFAULT NULL,"
             "PRIMARY KEY (`item_entry`)"
             ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        CharacterDatabase.DirectExecute(
+            "CREATE TABLE IF NOT EXISTS `mod_reagent_bank_share_members` ("
+            "`member_key` INT UNSIGNED NOT NULL,"
+            "`owner_key`  INT UNSIGNED NOT NULL,"
+            "`joined_at`  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            "PRIMARY KEY (`member_key`)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        CharacterDatabase.DirectExecute(
+            "CREATE TABLE IF NOT EXISTS `mod_reagent_bank_share_invites` ("
+            "`inviter_key` INT UNSIGNED NOT NULL,"
+            "`invitee_key` INT UNSIGNED NOT NULL,"
+            "`created_at`  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            "PRIMARY KEY (`invitee_key`)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        // One-time column rename for installs created before dual-mode (AccountWide=0/1) support
+        QueryResult oldCol = CharacterDatabase.Query(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mod_reagent_bank_share_members' "
+            "AND COLUMN_NAME = 'member_account_id'");
+
+        if (oldCol && (*oldCol)[0].Get<uint64>() > 0)
+        {
+            CharacterDatabase.DirectExecute(
+                "ALTER TABLE `mod_reagent_bank_share_members` "
+                "CHANGE COLUMN `member_account_id` `member_key` INT UNSIGNED NOT NULL, "
+                "CHANGE COLUMN `owner_account_id`  `owner_key`  INT UNSIGNED NOT NULL");
+
+            CharacterDatabase.DirectExecute(
+                "ALTER TABLE `mod_reagent_bank_share_invites` "
+                "CHANGE COLUMN `inviter_account_id` `inviter_key` INT UNSIGNED NOT NULL, "
+                "CHANGE COLUMN `invitee_account_id` `invitee_key` INT UNSIGNED NOT NULL");
+
+            LOG_INFO("module", "ReagentBankAccount: migrated share table columns to generic key names.");
+        }
     }
 
     static void LoadDepositExclusions()
@@ -407,6 +454,93 @@ namespace ReagentBank
     static bool IsDepositExcluded(uint32 itemEntry)
     {
         return itemEntry && g_reagentBankDepositExclusions.contains(itemEntry);
+    }
+
+    static bool IsValidCharacterName(std::string const& name)
+    {
+        if (name.empty() || name.size() > 12)
+            return false;
+
+        for (char c : name)
+            if (!std::isalpha(static_cast<unsigned char>(c)))
+                return false;
+
+        return true;
+    }
+
+    static std::string NormalizeCharacterName(std::string name)
+    {
+        if (!name.empty())
+        {
+            name[0] = char(std::toupper(static_cast<unsigned char>(name[0])));
+            for (std::size_t i = 1; i < name.size(); ++i)
+                name[i] = char(std::tolower(static_cast<unsigned char>(name[i])));
+        }
+
+        return name;
+    }
+
+    static std::string GetAccountDisplayName(uint32 accountId)
+    {
+        QueryResult result = CharacterDatabase.Query(
+            "SELECT name FROM characters WHERE account = {} ORDER BY guid ASC LIMIT 1",
+            accountId);
+
+        if (!result)
+            return "";
+
+        return (*result)[0].Get<std::string>();
+    }
+
+    // Returns the key used to identify a player's share slot.
+    // AccountWide=1: account_id (all chars on the account share one bank)
+    // AccountWide=0: character guid (each character has their own bank)
+    static uint32 GetShareKey(Player const* player)
+    {
+        return g_accountWideReagentBank
+            ? player->GetSession()->GetAccountId()
+            : uint32(player->GetGUID().GetCounter());
+    }
+
+    static std::string GetDisplayNameByKey(uint32 key)
+    {
+        if (g_accountWideReagentBank)
+            return GetAccountDisplayName(key);
+
+        QueryResult r = CharacterDatabase.Query(
+            "SELECT name FROM characters WHERE guid = {}", key);
+
+        if (!r)
+            return "";
+
+        return (*r)[0].Get<std::string>();
+    }
+
+    static void LoadShareMembers()
+    {
+        g_shareOwnerByKey.clear();
+
+        QueryResult result = CharacterDatabase.Query(
+            "SELECT member_key, owner_key FROM mod_reagent_bank_share_members");
+
+        if (!result)
+            return;
+
+        uint32 count = 0;
+        do
+        {
+            uint32 const member = (*result)[0].Get<uint32>();
+            uint32 const owner  = (*result)[1].Get<uint32>();
+
+            if (member && owner && member != owner)
+            {
+                g_shareOwnerByKey[member] = owner;
+                ++count;
+            }
+        } while (result->NextRow());
+
+        if (count)
+            LOG_INFO("module", "ReagentBankAccount: loaded {} reagent bank share member(s).", count);
     }
 
     static std::string GetStoredStorageMode()
@@ -567,6 +701,12 @@ namespace ReagentBank
             MigrateAccountRowsToCharacterRows();
 
         SetStoredStorageMode();
+
+        // Share keys (account_id vs char guid) are mode-specific — always clear on mode
+        // change regardless of EnableSharing, as stale keys from the old mode are invalid
+        CharacterDatabase.DirectExecute("DELETE FROM `mod_reagent_bank_share_members`");
+        CharacterDatabase.DirectExecute("DELETE FROM `mod_reagent_bank_share_invites`");
+        LOG_WARN("module", "ReagentBankAccount: storage mode changed from '{}' to '{}' — all share relationships cleared. Members must re-invite.", storedMode, desiredMode);
     }
 
     static void SendProtocol(ChatHandler* handler, std::string const& line)
@@ -587,6 +727,9 @@ namespace ReagentBank
         SendProtocol(handler, Acore::StringFormat("RBANK:ERR:{}", SanitizeProtocolText(message)));
     }
 
+    static void NotifyOnlineAccountPlayers(uint32 targetAccountId, std::string const& protocolLine); // defined below
+    static void NotifyPlayersByKey(uint32 key, std::string const& protocolLine);                    // defined below
+
     static void SendTransaction(ChatHandler* handler, char const* action, ItemAmountMap const& items)
     {
         if (!handler || !action || items.empty())
@@ -600,6 +743,30 @@ namespace ReagentBank
             SendProtocol(handler, Acore::StringFormat("RBANK:TX:ITEM:{}:{}", item.first, item.second));
 
         SendProtocol(handler, Acore::StringFormat("RBANK:TX:END:{}:{}:{}", action, total, uint32(items.size())));
+
+        if (!g_reagentBankSharingEnabled || !handler->GetSession() || !handler->GetSession()->GetPlayer())
+            return;
+
+        uint32 const actorKey = GetShareKey(handler->GetSession()->GetPlayer());
+        auto const it = g_shareOwnerByKey.find(actorKey);
+        uint32 const ownerKey = it != g_shareOwnerByKey.end() ? it->second : actorKey;
+
+        if (ownerKey != actorKey)
+            NotifyPlayersByKey(ownerKey, "RBANK:SHARE:REFRESH");
+
+        QueryResult members = CharacterDatabase.Query(
+            "SELECT member_key FROM mod_reagent_bank_share_members WHERE owner_key = {}",
+            ownerKey);
+
+        if (members)
+        {
+            do
+            {
+                uint32 const memberKey = (*members)[0].Get<uint32>();
+                if (memberKey != actorKey)
+                    NotifyPlayersByKey(memberKey, "RBANK:SHARE:REFRESH");
+            } while (members->NextRow());
+        }
     }
 
     static void SendDepositPreview(ChatHandler* handler, char const* scope, uint32 category, ItemAmountMap const& items)
@@ -723,6 +890,7 @@ namespace ReagentBank
             return;
 
         SendProtocol(handler, Acore::StringFormat("RBANK:BEGIN:ROOT:{}", g_accountWideReagentBank ? 1 : 0));
+        SendProtocol(handler, Acore::StringFormat("RBANK:SHARE:FEATURE:{}", g_reagentBankSharingEnabled ? 1 : 0));
 
         for (CategoryInfo const& category : Categories)
         {
@@ -1381,9 +1549,372 @@ namespace ReagentBank
         return false;
     }
 
+    static void SendShareOk(ChatHandler* handler, std::string const& message)
+    {
+        SendProtocol(handler, Acore::StringFormat("RBANK:SHARE:OK:{}", SanitizeProtocolText(message)));
+    }
+
+    static void SendShareError(ChatHandler* handler, std::string const& message)
+    {
+        SendProtocol(handler, Acore::StringFormat("RBANK:SHARE:ERR:{}", SanitizeProtocolText(message)));
+    }
+
+    static void NotifyOnlineAccountPlayers(uint32 targetAccountId, std::string const& protocolLine)
+    {
+        QueryResult result = CharacterDatabase.Query(
+            "SELECT guid FROM characters WHERE account = {}",
+            targetAccountId);
+
+        if (!result)
+            return;
+
+        do
+        {
+            uint32 const lowGuid = (*result)[0].Get<uint32>();
+            ObjectGuid guid = ObjectGuid::Create<HighGuid::Player>(lowGuid);
+            Player* target = ObjectAccessor::FindPlayer(guid);
+
+            if (target && target->GetSession())
+            {
+                ChatHandler targetHandler(target->GetSession());
+                SendProtocol(&targetHandler, protocolLine);
+            }
+        } while (result->NextRow());
+    }
+
+    // Notifies the player(s) represented by key.
+    // AccountWide=1: notifies all online characters on that account.
+    // AccountWide=0: notifies that specific character by guid.
+    static void NotifyPlayersByKey(uint32 key, std::string const& protocolLine)
+    {
+        if (g_accountWideReagentBank)
+        {
+            NotifyOnlineAccountPlayers(key, protocolLine);
+            return;
+        }
+
+        ObjectGuid guid = ObjectGuid::Create<HighGuid::Player>(key);
+        Player* target = ObjectAccessor::FindPlayer(guid);
+        if (target && target->GetSession())
+        {
+            ChatHandler targetHandler(target->GetSession());
+            SendProtocol(&targetHandler, protocolLine);
+        }
+    }
+
+    static void SendShareOpen(ChatHandler* handler, Player const* player)
+    {
+        uint32 const playerKey = GetShareKey(player);
+
+        auto const memberIt = g_shareOwnerByKey.find(playerKey);
+        if (memberIt != g_shareOwnerByKey.end())
+        {
+            std::string const ownerName = GetDisplayNameByKey(memberIt->second);
+            SendProtocol(handler, Acore::StringFormat("RBANK:SHARE:BEGIN:member:{}", SanitizeProtocolText(ownerName)));
+            SendProtocol(handler, "RBANK:SHARE:END");
+            return;
+        }
+
+        SendProtocol(handler, "RBANK:SHARE:BEGIN:owner:");
+
+        QueryResult result = CharacterDatabase.Query(
+            "SELECT member_key FROM mod_reagent_bank_share_members WHERE owner_key = {} ORDER BY joined_at ASC",
+            playerKey);
+
+        if (result)
+        {
+            do
+            {
+                uint32 const memberKey = (*result)[0].Get<uint32>();
+                SendProtocol(handler, Acore::StringFormat("RBANK:SHARE:ITEM:{}", SanitizeProtocolText(GetDisplayNameByKey(memberKey))));
+            } while (result->NextRow());
+        }
+
+        SendProtocol(handler, "RBANK:SHARE:END");
+    }
+
+    static void HandleShareInvite(ChatHandler* handler, Player* player, std::string const& inviteeNameRaw)
+    {
+        if (!IsValidCharacterName(inviteeNameRaw))
+        {
+            SendShareError(handler, "Invalid character name.");
+            return;
+        }
+
+        std::string const inviteeName = NormalizeCharacterName(inviteeNameRaw);
+        uint32 const inviterKey = GetShareKey(player);
+
+        if (g_shareOwnerByKey.count(inviterKey))
+        {
+            SendShareError(handler, "You are a member of another shared bank. Leave it before inviting others.");
+            return;
+        }
+
+        // AccountWide=1: key is account_id; AccountWide=0: key is character guid
+        QueryResult charResult = CharacterDatabase.Query(
+            "SELECT account, guid FROM characters WHERE name = '{}'", inviteeName);
+
+        if (!charResult)
+        {
+            SendShareError(handler, Acore::StringFormat("Character '{}' not found.", inviteeName));
+            return;
+        }
+
+        uint32 const inviteeKey = g_accountWideReagentBank
+            ? (*charResult)[0].Get<uint32>()  // account_id
+            : (*charResult)[1].Get<uint32>(); // char guid
+
+        if (inviteeKey == inviterKey)
+        {
+            SendShareError(handler, "You cannot invite yourself.");
+            return;
+        }
+
+        if (g_shareOwnerByKey.count(inviteeKey))
+        {
+            SendShareError(handler, Acore::StringFormat("{} is already part of another shared bank arrangement.", inviteeName));
+            return;
+        }
+
+        QueryResult memberCheck = CharacterDatabase.Query(
+            "SELECT COUNT(*) FROM mod_reagent_bank_share_members WHERE owner_key = {}",
+            inviteeKey);
+
+        if (memberCheck && (*memberCheck)[0].Get<uint64>() > 0)
+        {
+            SendShareError(handler, Acore::StringFormat("{} is already part of another shared bank arrangement.", inviteeName));
+            return;
+        }
+
+        CharacterDatabase.DirectExecute(
+            "INSERT INTO mod_reagent_bank_share_invites (inviter_key, invitee_key) "
+            "VALUES ({}, {}) "
+            "ON DUPLICATE KEY UPDATE inviter_key = {}, created_at = CURRENT_TIMESTAMP",
+            inviterKey, inviteeKey, inviterKey);
+
+        std::string const inviterName = GetDisplayNameByKey(inviterKey);
+        NotifyPlayersByKey(inviteeKey, Acore::StringFormat("RBANK:SHARE:INVITE:{}", SanitizeProtocolText(inviterName)));
+
+        SendShareOk(handler, Acore::StringFormat("Invite sent to {}.", inviteeName));
+        SendShareOpen(handler, player);
+    }
+
+    static void HandleShareAccept(ChatHandler* handler, Player* player)
+    {
+        uint32 const memberKey = GetShareKey(player);
+
+        if (g_shareOwnerByKey.count(memberKey))
+        {
+            SendShareError(handler, "You are already a member of a shared bank.");
+            return;
+        }
+
+        QueryResult inviteResult = CharacterDatabase.Query(
+            "SELECT inviter_key FROM mod_reagent_bank_share_invites WHERE invitee_key = {}",
+            memberKey);
+
+        if (!inviteResult)
+        {
+            SendShareError(handler, "You have no pending invite to accept.");
+            return;
+        }
+
+        uint32 const ownerKey = (*inviteResult)[0].Get<uint32>();
+
+        if (g_shareOwnerByKey.count(ownerKey))
+        {
+            CharacterDatabase.DirectExecute(
+                "DELETE FROM mod_reagent_bank_share_invites WHERE invitee_key = {}",
+                memberKey);
+            SendShareError(handler, "The inviter is no longer available as a bank owner. Invite cancelled.");
+            return;
+        }
+
+        auto trans = CharacterDatabase.BeginTransaction();
+
+        // Merge member's bank into owner's bank.
+        // VALUES() is ambiguous in INSERT...SELECT ON DUPLICATE KEY in MySQL 8.0, so use UPDATE+JOIN.
+        // AccountWide=1: storage key = account_id, guid column = 0
+        // AccountWide=0: storage key = char guid,  account_id column = 0
+        if (g_accountWideReagentBank)
+        {
+            trans->Append(
+                "UPDATE mod_reagent_bank_account tgt "
+                "JOIN mod_reagent_bank_account src "
+                "  ON src.account_id = {} AND src.guid = 0 AND tgt.item_entry = src.item_entry "
+                "SET tgt.amount = LEAST(4294967295, tgt.amount + src.amount), "
+                "    tgt.item_subclass = src.item_subclass "
+                "WHERE tgt.account_id = {} AND tgt.guid = 0",
+                memberKey, ownerKey);
+
+            trans->Append(
+                "INSERT INTO mod_reagent_bank_account (account_id, guid, item_entry, item_subclass, amount) "
+                "SELECT {}, 0, src.item_entry, src.item_subclass, src.amount "
+                "FROM mod_reagent_bank_account src "
+                "LEFT JOIN mod_reagent_bank_account tgt "
+                "  ON tgt.account_id = {} AND tgt.guid = 0 AND tgt.item_entry = src.item_entry "
+                "WHERE src.account_id = {} AND src.guid = 0 "
+                "  AND tgt.item_entry IS NULL",
+                ownerKey, ownerKey, memberKey);
+
+            trans->Append(
+                "DELETE FROM mod_reagent_bank_account WHERE account_id = {} AND guid = 0",
+                memberKey);
+        }
+        else
+        {
+            trans->Append(
+                "UPDATE mod_reagent_bank_account tgt "
+                "JOIN mod_reagent_bank_account src "
+                "  ON src.account_id = 0 AND src.guid = {} AND tgt.item_entry = src.item_entry "
+                "SET tgt.amount = LEAST(4294967295, tgt.amount + src.amount), "
+                "    tgt.item_subclass = src.item_subclass "
+                "WHERE tgt.account_id = 0 AND tgt.guid = {}",
+                memberKey, ownerKey);
+
+            trans->Append(
+                "INSERT INTO mod_reagent_bank_account (account_id, guid, item_entry, item_subclass, amount) "
+                "SELECT 0, {}, src.item_entry, src.item_subclass, src.amount "
+                "FROM mod_reagent_bank_account src "
+                "LEFT JOIN mod_reagent_bank_account tgt "
+                "  ON tgt.account_id = 0 AND tgt.guid = {} AND tgt.item_entry = src.item_entry "
+                "WHERE src.account_id = 0 AND src.guid = {} "
+                "  AND tgt.item_entry IS NULL",
+                ownerKey, ownerKey, memberKey);
+
+            trans->Append(
+                "DELETE FROM mod_reagent_bank_account WHERE account_id = 0 AND guid = {}",
+                memberKey);
+        }
+
+        trans->Append(
+            "INSERT INTO mod_reagent_bank_share_members (member_key, owner_key) "
+            "VALUES ({}, {}) "
+            "ON DUPLICATE KEY UPDATE owner_key = {}, joined_at = CURRENT_TIMESTAMP",
+            memberKey, ownerKey, ownerKey);
+
+        trans->Append(
+            "DELETE FROM mod_reagent_bank_share_invites WHERE invitee_key = {}",
+            memberKey);
+
+        CharacterDatabase.CommitTransaction(trans);
+
+        g_shareOwnerByKey[memberKey] = ownerKey;
+
+        std::string const ownerName = GetDisplayNameByKey(ownerKey);
+        SendProtocol(handler, Acore::StringFormat("RBANK:SHARE:ACCEPTED:{}", SanitizeProtocolText(ownerName)));
+
+        std::string const memberName = GetDisplayNameByKey(memberKey);
+        NotifyPlayersByKey(ownerKey, Acore::StringFormat("RBANK:SHARE:JOINED:{}", SanitizeProtocolText(memberName)));
+
+        LOG_INFO("module", "ReagentBankAccount: key {} joined key {}'s shared bank.", memberKey, ownerKey);
+    }
+
+    static void HandleShareDecline(ChatHandler* handler, Player* player)
+    {
+        uint32 const inviteeKey = GetShareKey(player);
+
+        QueryResult result = CharacterDatabase.Query(
+            "SELECT inviter_key FROM mod_reagent_bank_share_invites WHERE invitee_key = {}",
+            inviteeKey);
+
+        if (!result)
+        {
+            SendShareError(handler, "You have no pending invite to decline.");
+            return;
+        }
+
+        CharacterDatabase.DirectExecute(
+            "DELETE FROM mod_reagent_bank_share_invites WHERE invitee_key = {}",
+            inviteeKey);
+
+        SendShareOk(handler, "Invite declined.");
+    }
+
+    static void HandleShareLeave(ChatHandler* handler, Player* player)
+    {
+        uint32 const memberKey = GetShareKey(player);
+
+        auto const it = g_shareOwnerByKey.find(memberKey);
+        if (it == g_shareOwnerByKey.end())
+        {
+            SendShareError(handler, "You are not a member of any shared bank.");
+            return;
+        }
+
+        uint32 const ownerKey = it->second;
+
+        CharacterDatabase.DirectExecute(
+            "DELETE FROM mod_reagent_bank_share_members WHERE member_key = {}",
+            memberKey);
+
+        g_shareOwnerByKey.erase(memberKey);
+
+        std::string const ownerName = GetDisplayNameByKey(ownerKey);
+        SendProtocol(handler, Acore::StringFormat("RBANK:SHARE:LEFT_SELF:{}", SanitizeProtocolText(ownerName)));
+
+        std::string const memberName = GetDisplayNameByKey(memberKey);
+        NotifyPlayersByKey(ownerKey, Acore::StringFormat("RBANK:SHARE:LEFT:{}", SanitizeProtocolText(memberName)));
+
+        LOG_INFO("module", "ReagentBankAccount: key {} left key {}'s shared bank.", memberKey, ownerKey);
+    }
+
+    static void HandleShareKick(ChatHandler* handler, Player* player, std::string const& memberNameRaw)
+    {
+        if (!IsValidCharacterName(memberNameRaw))
+        {
+            SendShareError(handler, "Invalid character name.");
+            return;
+        }
+
+        std::string const memberName = NormalizeCharacterName(memberNameRaw);
+        uint32 const ownerKey = GetShareKey(player);
+
+        if (g_shareOwnerByKey.count(ownerKey))
+        {
+            SendShareError(handler, "You are a member of another shared bank and cannot kick members.");
+            return;
+        }
+
+        // AccountWide=1: key is account_id; AccountWide=0: key is character guid
+        QueryResult charResult = CharacterDatabase.Query(
+            "SELECT account, guid FROM characters WHERE name = '{}'", memberName);
+
+        if (!charResult)
+        {
+            SendShareError(handler, Acore::StringFormat("Character '{}' not found.", memberName));
+            return;
+        }
+
+        uint32 const memberKey = g_accountWideReagentBank
+            ? (*charResult)[0].Get<uint32>()  // account_id
+            : (*charResult)[1].Get<uint32>(); // char guid
+
+        auto const it = g_shareOwnerByKey.find(memberKey);
+        if (it == g_shareOwnerByKey.end() || it->second != ownerKey)
+        {
+            SendShareError(handler, Acore::StringFormat("{} is not a member of your shared bank.", memberName));
+            return;
+        }
+
+        CharacterDatabase.DirectExecute(
+            "DELETE FROM mod_reagent_bank_share_members WHERE member_key = {}",
+            memberKey);
+
+        g_shareOwnerByKey.erase(memberKey);
+
+        SendShareOk(handler, Acore::StringFormat("{} has been removed from your shared bank.", memberName));
+        SendShareOpen(handler, player);
+
+        std::string const ownerName = GetDisplayNameByKey(ownerKey);
+        NotifyPlayersByKey(memberKey, Acore::StringFormat("RBANK:SHARE:KICKED:{}", SanitizeProtocolText(ownerName)));
+
+        LOG_INFO("module", "ReagentBankAccount: key {} was removed from key {}'s shared bank.", memberKey, ownerKey);
+    }
+
     static void SendUsage(ChatHandler* handler)
     {
-        SendError(handler, "Usage: .rbank open | list <categoryId> [page] [id|name|amount|amount_asc] | preview deposit all|category <categoryId> | check recipe <requestId> <itemEntry> <amountPerCraft> [...] | deposit all|category <categoryId>|item <itemEntry> <amount>|items <itemEntry> <amount> [...] | withdraw all|category <categoryId>|item <itemEntry> <one|stack|all|exact <amount>>|needed <itemEntry> <amount> [...]");
+        SendError(handler, "Usage: .rbank open | list <categoryId> [page] [id|name|amount|amount_asc] | preview deposit all|category <categoryId> | check recipe <requestId> <itemEntry> <amountPerCraft> [...] | deposit all|category <categoryId>|item <itemEntry> <amount>|items <itemEntry> <amount> [...] | withdraw all|category <categoryId>|item <itemEntry> <one|stack|all|exact <amount>>|needed <itemEntry> <amount> [...] | share [open|invite <name>|accept|decline|leave|kick <name>]");
     }
 }
 
@@ -1854,6 +2385,68 @@ private:
             return true;
         }
 
+        if (command == "share")
+        {
+            if (!g_reagentBankSharingEnabled)
+            {
+                ReagentBank::SendProtocol(handler, "RBANK:SHARE:ERR:Sharing is not enabled on this server.");
+                return true;
+            }
+
+            if (tokens.size() < 2 || ReagentBank::ToLower(tokens[1]) == "open")
+            {
+                ReagentBank::SendShareOpen(handler, player);
+                return true;
+            }
+
+            std::string shareCmd = ReagentBank::ToLower(tokens[1]);
+
+            if (shareCmd == "invite")
+            {
+                if (tokens.size() < 3)
+                {
+                    ReagentBank::SendShareError(handler, "Usage: .rbank share invite <character_name>");
+                    return true;
+                }
+
+                ReagentBank::HandleShareInvite(handler, player, tokens[2]);
+                return true;
+            }
+
+            if (shareCmd == "accept")
+            {
+                ReagentBank::HandleShareAccept(handler, player);
+                return true;
+            }
+
+            if (shareCmd == "decline")
+            {
+                ReagentBank::HandleShareDecline(handler, player);
+                return true;
+            }
+
+            if (shareCmd == "leave")
+            {
+                ReagentBank::HandleShareLeave(handler, player);
+                return true;
+            }
+
+            if (shareCmd == "kick")
+            {
+                if (tokens.size() < 3)
+                {
+                    ReagentBank::SendShareError(handler, "Usage: .rbank share kick <character_name>");
+                    return true;
+                }
+
+                ReagentBank::HandleShareKick(handler, player, tokens[2]);
+                return true;
+            }
+
+            ReagentBank::SendShareError(handler, "Usage: .rbank share [open|invite <name>|accept|decline|leave|kick <name>]");
+            return true;
+        }
+
         if (command == "help")
         {
             ReagentBank::SendUsage(handler);
@@ -1879,6 +2472,8 @@ public:
         {
             ReagentBank::EnsureStorageModeMatchesConfig();
             ReagentBank::LoadDepositExclusions();
+            if (g_reagentBankSharingEnabled)
+                ReagentBank::LoadShareMembers();
             g_reagentBankStorageReady = true;
 
             LOG_INFO("module", "Standalone Reagent Bank config reloaded. Enabled: {}, AccountWide: {}, AutoMigrate: {}, MaxItemsPerPage: {}",
@@ -1894,6 +2489,8 @@ public:
         ReagentBank::LoadConfig();
         ReagentBank::EnsureStorageModeMatchesConfig();
         ReagentBank::LoadDepositExclusions();
+        if (g_reagentBankSharingEnabled)
+            ReagentBank::LoadShareMembers();
         g_reagentBankStorageReady = true;
 
         LOG_INFO("module", "Standalone Reagent Bank command module loaded. Enabled: {}, AccountWide: {}, AutoMigrate: {}, MaxItemsPerPage: {}",
@@ -1904,8 +2501,40 @@ public:
     }
 };
 
+class mod_reagent_bank_account_playerscript : public PlayerScript
+{
+public:
+    mod_reagent_bank_account_playerscript() : PlayerScript("mod_reagent_bank_account_playerscript") {}
+
+    void OnPlayerLogin(Player* player) override
+    {
+        if (!g_reagentBankEnabled || !g_reagentBankStorageReady || !g_reagentBankSharingEnabled)
+            return;
+
+        uint32 const loginKey = ReagentBank::GetShareKey(player);
+
+        QueryResult result = CharacterDatabase.Query(
+            "SELECT inviter_key FROM mod_reagent_bank_share_invites WHERE invitee_key = {} LIMIT 1",
+            loginKey);
+
+        if (!result)
+            return;
+
+        uint32 const inviterKey = (*result)[0].Get<uint32>();
+        std::string const inviterName = ReagentBank::GetDisplayNameByKey(inviterKey);
+
+        if (inviterName.empty())
+            return;
+
+        ChatHandler handler(player->GetSession());
+        ReagentBank::SendProtocol(&handler, Acore::StringFormat("RBANK:SHARE:INVITE:{}",
+            ReagentBank::SanitizeProtocolText(inviterName)));
+    }
+};
+
 void AddSC_mod_reagent_bank_account()
 {
     new mod_reagent_bank_account_worldscript();
     new mod_reagent_bank_account_commandscript();
+    new mod_reagent_bank_account_playerscript();
 }

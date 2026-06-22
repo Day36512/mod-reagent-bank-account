@@ -1829,8 +1829,7 @@ function RB:IsAutoDepositViewSuppressed()
     if not self.autoDepositSuppressViewUntil or GetTime() > self.autoDepositSuppressViewUntil then
         return false
     end
-
-    return not (self.frame and self.frame:IsShown())
+    return true
 end
 
 function RB:RunAutoDepositTicker(now)
@@ -1866,7 +1865,6 @@ function RB:RunAutoDepositTicker(now)
     self:SendServerCommand("deposit all", { action = "deposit", source = "auto" })
 
     if self.frame and self.frame:IsShown() then
-        self.autoDepositSuppressViewUntil = nil
         self:ScheduleCurrentRefresh(MUTATION_REFRESH_DELAY)
     end
 end
@@ -4211,6 +4209,10 @@ function RB:FinalizeTransaction(transaction)
     self.lastTransaction = transaction
     self:PrintDepositTransactionMessage(transaction)
     self:UpdateUndoButton()
+
+    if self.frame and self.frame:IsShown() then
+        self:ScheduleCurrentRefresh(MUTATION_REFRESH_DELAY)
+    end
 end
 
 function RB:ReverseLastTransaction()
