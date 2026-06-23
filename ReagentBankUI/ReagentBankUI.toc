@@ -7,3 +7,4 @@
 
 ReagentBankUI.xml
 ReagentBankUI.lua
+ReagentBankUI_Share.lua

@@ -38,3 +38,25 @@ ReagentBankAccount.AutoMigrate = 1
 #        Default:     16
 #
 ReagentBankAccount.MaxItemsPerPage = 16
+
+#
+#    ReagentBankAccount.EnableSharing
+#        Description: Enables reagent bank sharing between players.
+#                     AccountWide = 1: sharing is account-to-account (all characters on
+#                                      each account see the shared bank).
+#                     AccountWide = 0: sharing is character-to-character (only the invited
+#                                      character sees the shared bank; other characters on
+#                                      the same account are unaffected and may hold
+#                                      independent share relationships).
+#                     Members' items merge into the owner's bank on join.
+#                     Items remain in the owner's bank if a member leaves or is kicked.
+#
+#                     WARNING: Do not change AccountWide after players have established
+#                     share relationships. On mode change, all share memberships are
+#                     cleared automatically, but items stay wherever they were at the
+#                     time of the switch (i.e. merged into whichever bank accepted them).
+#                     There is no way to reconstruct original ownership after a merge.
+#                     Treat AccountWide as a set-and-forget option when sharing is in use.
+#        Default:     0
+#
+ReagentBankAccount.EnableSharing = 0
