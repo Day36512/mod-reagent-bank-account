@@ -463,6 +463,8 @@ local TRADE_SKILL_PREPARE_COUNT_MIN = 1
 local TRADE_SKILL_PREPARE_COUNT_MAX = 999
 local DEPOSIT_PREVIEW_ROW_COUNT = 10
 local TRADE_SKILL_CHECK_TIMEOUT = 2.0
+local TOOLTIP_BANK_CHECK_TIMEOUT = 2.0
+local TOOLTIP_BANK_COUNT_CACHE_SECONDS = 60
 local TRADE_SKILL_SHOPPING_LIST_LIMIT = 3
 local SHOPPING_LIST_CHAT_ITEM_LIMIT = 12
 local SHOPPING_LIST_IMPORT_TIMEOUT = 10.0
@@ -772,6 +774,26 @@ local function ParseItemIdFromLink(link)
 
     local itemId = string.match(link, "item:(%d+):")
     return tonumber(itemId)
+end
+
+local BANK_COUNT_TOOLTIP_NAMES = {
+    "GameTooltip",
+    "ItemRefTooltip",
+    "ShoppingTooltip1",
+    "ShoppingTooltip2",
+}
+
+local function ForEachBankCountTooltip(callback)
+    if type(callback) ~= "function" then
+        return
+    end
+
+    for _, tooltipName in ipairs(BANK_COUNT_TOOLTIP_NAMES) do
+        local tooltip = _G[tooltipName]
+        if tooltip then
+            callback(tooltip)
+        end
+    end
 end
 
 local function AddAmountToMap(map, itemEntry, amount)
@@ -1647,6 +1669,179 @@ function RB:SendServerCommand(command, transactionContext)
     end
 
     SendChatMessage(COMMAND_PREFIX .. " " .. command, "SAY")
+end
+
+function RB:CacheBankItemCount(itemEntry, amount)
+    itemEntry = tonumber(itemEntry)
+    if not itemEntry or itemEntry <= 0 then
+        return
+    end
+
+    itemEntry = math.floor(itemEntry)
+    amount = math.max(0, math.floor(tonumber(amount) or 0))
+
+    self.bankItemCounts = self.bankItemCounts or {}
+    self.bankItemCountUpdatedAt = self.bankItemCountUpdatedAt or {}
+    self.bankItemCounts[itemEntry] = amount
+    self.bankItemCountUpdatedAt[itemEntry] = GetTime()
+end
+
+function RB:GetCachedBankItemCount(itemEntry)
+    itemEntry = tonumber(itemEntry)
+    if not itemEntry or itemEntry <= 0 or type(self.bankItemCounts) ~= "table" then
+        return nil
+    end
+
+    itemEntry = math.floor(itemEntry)
+    local amount = self.bankItemCounts[itemEntry]
+    if amount == nil then
+        return nil
+    end
+
+    local updatedAt = self.bankItemCountUpdatedAt and self.bankItemCountUpdatedAt[itemEntry] or nil
+    if updatedAt and GetTime() - updatedAt > TOOLTIP_BANK_COUNT_CACHE_SECONDS then
+        self.bankItemCounts[itemEntry] = nil
+        self.bankItemCountUpdatedAt[itemEntry] = nil
+        return nil
+    end
+
+    return math.max(0, math.floor(tonumber(amount) or 0))
+end
+
+function RB:ApplyBankCountTransaction(transaction)
+    local action = self:NormalizeTransactionAction(transaction and transaction.action)
+    if not action or not transaction.items then
+        return
+    end
+
+    local direction = action == "deposit" and 1 or -1
+    for _, item in ipairs(transaction.items) do
+        local itemEntry = tonumber(item.entry)
+        local amount = math.floor(tonumber(item.amount) or 0)
+        if itemEntry and itemEntry > 0 and amount > 0 then
+            local cachedAmount = self:GetCachedBankItemCount(itemEntry)
+            if cachedAmount ~= nil then
+                self:CacheBankItemCount(itemEntry, cachedAmount + (direction * amount))
+            end
+        end
+    end
+end
+
+function RB:AddBankCountTooltipLine(tooltip, itemEntry, amount)
+    if not tooltip then
+        return
+    end
+
+    itemEntry = tonumber(itemEntry)
+    amount = math.max(0, math.floor(tonumber(amount) or 0))
+    if not itemEntry or itemEntry <= 0 or amount <= 0 then
+        return
+    end
+
+    itemEntry = math.floor(itemEntry)
+    if tooltip.ReagentBankUICountItem == itemEntry and tooltip.ReagentBankUICountAmount == amount then
+        return
+    end
+
+    tooltip:AddDoubleLine("Reagent Bank", FormatCount(amount), 0.20, 1.00, 0.60, 1.00, 1.00, 1.00)
+    tooltip.ReagentBankUICountItem = itemEntry
+    tooltip.ReagentBankUICountAmount = amount
+    tooltip:Show()
+end
+
+function RB:ClearBankCountTooltipState(tooltip)
+    if not tooltip then
+        return
+    end
+
+    tooltip.ReagentBankUICountItem = nil
+    tooltip.ReagentBankUICountAmount = nil
+end
+
+function RB:RequestTooltipBankCount(itemEntry)
+    itemEntry = tonumber(itemEntry)
+    if not itemEntry or itemEntry <= 0 then
+        return
+    end
+
+    itemEntry = math.floor(itemEntry)
+    local now = GetTime()
+    self.tooltipBankCheckPendingByItem = self.tooltipBankCheckPendingByItem or {}
+    if self.tooltipBankCheckPendingByItem[itemEntry] and now < self.tooltipBankCheckPendingByItem[itemEntry] then
+        return
+    end
+
+    self.tooltipBankCheckRequestId = (tonumber(self.tooltipBankCheckRequestId) or 700000000) + 1
+    if self.tooltipBankCheckRequestId > 799999999 then
+        self.tooltipBankCheckRequestId = 700000001
+    end
+
+    local requestId = self.tooltipBankCheckRequestId
+    self.pendingTooltipBankChecks = self.pendingTooltipBankChecks or {}
+    self.pendingTooltipBankChecks[requestId] = {
+        itemEntry = itemEntry,
+        createdAt = now,
+    }
+    self.tooltipBankCheckPendingByItem[itemEntry] = now + TOOLTIP_BANK_CHECK_TIMEOUT
+
+    self:SendServerCommand(self:BuildItemAmountCommand("check recipe " .. tostring(requestId), {
+        { entry = itemEntry, amount = 1 },
+    }))
+end
+
+function RB:RefreshBankCountTooltip(tooltip)
+    if not tooltip or not tooltip.GetItem then
+        return
+    end
+
+    local _, link = tooltip:GetItem()
+    local itemEntry = ParseItemIdFromLink(link)
+    if not itemEntry then
+        return
+    end
+
+    local amount = self:GetCachedBankItemCount(itemEntry)
+    if amount ~= nil then
+        self:AddBankCountTooltipLine(tooltip, itemEntry, amount)
+        return
+    end
+
+    self:RequestTooltipBankCount(itemEntry)
+end
+
+function RB:RefreshOpenBankCountTooltips(itemEntry)
+    itemEntry = tonumber(itemEntry)
+    if not itemEntry or itemEntry <= 0 then
+        return
+    end
+
+    itemEntry = math.floor(itemEntry)
+    ForEachBankCountTooltip(function(tooltip)
+        if tooltip and tooltip:IsShown() and tooltip.GetItem then
+            local _, link = tooltip:GetItem()
+            if ParseItemIdFromLink(link) == itemEntry then
+                self:RefreshBankCountTooltip(tooltip)
+            end
+        end
+    end)
+end
+
+function RB:InstallBankCountTooltipHooks()
+    if self.bankCountTooltipHooksInstalled then
+        return
+    end
+
+    self.bankCountTooltipHooksInstalled = true
+    ForEachBankCountTooltip(function(tooltip)
+        if tooltip and tooltip.HookScript then
+            tooltip:HookScript("OnTooltipSetItem", function(selfTooltip)
+                RB:RefreshBankCountTooltip(selfTooltip)
+            end)
+            tooltip:HookScript("OnTooltipCleared", function(selfTooltip)
+                RB:ClearBankCountTooltipState(selfTooltip)
+            end)
+        end
+    end)
 end
 
 function RB:GetItemSortMode()
@@ -4200,6 +4395,8 @@ function RB:FinalizeTransaction(transaction)
     if not transaction or not transaction.action or not transaction.items or #transaction.items == 0 then
         return
     end
+
+    self:ApplyBankCountTransaction(transaction)
 
     if self.reverseCollector and self:MergeTransactionIntoCollector(transaction) then
         return
@@ -6755,7 +6952,9 @@ function RB:HandleProtocol(message)
                 local amount = tonumber(parts[5]) or 0
 
                 if itemEntry and itemEntry > 0 then
-                    self.pendingBankCheck.counts[math.floor(itemEntry)] = math.max(0, math.floor(amount))
+                    local storedAmount = math.max(0, math.floor(amount))
+                    self.pendingBankCheck.counts[math.floor(itemEntry)] = storedAmount
+                    self:CacheBankItemCount(itemEntry, storedAmount)
                 end
             end
             return true
@@ -6778,6 +6977,20 @@ function RB:HandleProtocol(message)
 
                     self:CompletePendingShoppingListImport(pending.key)
                     self:UpdateTradeSkillControls()
+                end
+
+                local pendingTooltip = self.pendingTooltipBankChecks and self.pendingTooltipBankChecks[requestId] or nil
+                if pendingTooltip then
+                    local itemEntry = tonumber(pendingTooltip.itemEntry)
+                    if itemEntry and itemEntry > 0 then
+                        itemEntry = math.floor(itemEntry)
+                        self:CacheBankItemCount(itemEntry, tonumber(check.counts and check.counts[itemEntry]) or 0)
+                        if self.tooltipBankCheckPendingByItem then
+                            self.tooltipBankCheckPendingByItem[itemEntry] = nil
+                        end
+                        self:RefreshOpenBankCountTooltips(itemEntry)
+                    end
+                    self.pendingTooltipBankChecks[requestId] = nil
                 end
             end
 
@@ -6890,6 +7103,10 @@ function RB:HandleProtocol(message)
         local itemEntry = tonumber(parts[3])
         local amount = tonumber(parts[4]) or 0
 
+        if itemEntry and itemEntry > 0 then
+            self:CacheBankItemCount(itemEntry, amount)
+        end
+
         if itemEntry and itemEntry > 0 and amount > 0 then
             table.insert(self.pendingItems, {
                 entry = math.floor(itemEntry),
@@ -6962,6 +7179,8 @@ if ChatFrame_AddMessageEventFilter then
 else
     RB:RegisterEvent("CHAT_MSG_SYSTEM")
 end
+
+RB:InstallBankCountTooltipHooks()
 
 SLASH_REAGENTBANKUI1 = "/rbank"
 SLASH_REAGENTBANKUI2 = "/reagentbank"
